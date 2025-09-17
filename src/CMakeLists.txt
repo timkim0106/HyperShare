@@ -4,6 +4,8 @@ add_library(hypershare_core
     core/utils.cpp
     core/cli.cpp
     network/protocol.cpp
+    network/connection.cpp
+    network/tcp_server.cpp
 )
 
 target_include_directories(hypershare_core PUBLIC
