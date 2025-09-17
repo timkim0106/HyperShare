@@ -1,10 +1,10 @@
 # HyperShare
 
-A high-performance P2P file sharing system built with modern C++20.
+A high-performance P2P file sharing system built with C++20.
 
 ## What is this?
 
-I got tired of slow file transfers and complicated sharing setups, so I built my own. HyperShare uses cutting-edge C++20 features and modern cryptography to create a fast, secure way to share files directly between computers.
+I got tired of slow file transfers and complicated sharing setups, so I built my own. HyperShare uses C++20 features and modern cryptography to create a fast, secure way to share files directly between computers.
 
 ## Features
 
@@ -39,6 +39,7 @@ This project showcases modern C++ features:
 - Concepts for type safety
 - Ranges for clean data processing
 - Modules (where supported)
+- More C++ practice!
 
 ## Performance Goals
 
