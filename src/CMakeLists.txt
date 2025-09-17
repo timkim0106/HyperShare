@@ -1,6 +1,8 @@
 add_library(hypershare_core
     core/logger.cpp
     core/config.cpp
+    core/utils.cpp
+    core/cli.cpp
 )
 
 target_include_directories(hypershare_core PUBLIC

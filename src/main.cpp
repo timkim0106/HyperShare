@@ -5,25 +5,47 @@
 #include <chrono>
 #include "hypershare/core/logger.hpp"
 #include "hypershare/core/config.hpp"
+#include "hypershare/core/cli.hpp"
 
 int main(int argc, char* argv[]) {
+    hypershare::core::CommandLineParser parser("hypershare");
+    
+    if (!parser.parse(argc, argv)) {
+        std::cerr << "Error: " << parser.get_error() << "\n\n";
+        parser.print_help();
+        return 1;
+    }
+    
+    if (parser.has_option("help")) {
+        parser.print_help();
+        return 0;
+    }
+    
+    if (parser.has_option("version")) {
+        parser.print_version();
+        return 0;
+    }
+    
     hypershare::core::Config::instance().set_defaults();
-    hypershare::core::Logger::initialize();
+    
+    std::string config_file = parser.get_option("config", "~/.hypershare.conf");
+    if (hypershare::core::utils::FileUtils::exists(config_file)) {
+        hypershare::core::Config::instance().load_from_file(config_file);
+    }
+    
+    auto log_level = parser.has_option("verbose") ? 
+        hypershare::core::LogLevel::Debug : hypershare::core::LogLevel::Info;
+    hypershare::core::Logger::initialize("hypershare.log", log_level);
     
     LOG_INFO("HyperShare starting up");
     
-    if (argc < 2) {
-        std::cout << "HyperShare v1.0.0\n";
-        std::cout << "Usage: hypershare <command> [options]\n\n";
-        std::cout << "Commands:\n";
-        std::cout << "  start     Start HyperShare daemon\n";
-        std::cout << "  share     Share a file\n";
-        std::cout << "  connect   Connect to a peer\n";
-        std::cout << "  status    Show current status\n";
+    auto& args = parser.get_positional_args();
+    if (args.empty()) {
+        parser.print_help();
         return 0;
     }
 
-    std::string command = argv[1];
+    std::string command = args[0];
     
     if (command == "start") {
         auto& config = hypershare::core::Config::instance();
@@ -40,19 +62,21 @@ int main(int argc, char* argv[]) {
         }
     }
     else if (command == "share") {
-        if (argc < 3) {
+        if (args.size() < 2) {
             std::cout << "Usage: hypershare share <filename>\n";
             return 1;
         }
-        std::cout << "Sharing file: " << argv[2] << "\n";
+        LOG_INFO("Sharing file: {}", args[1]);
+        std::cout << "Sharing file: " << args[1] << "\n";
         // TODO: Implement file sharing
     }
     else if (command == "connect") {
-        if (argc < 3) {
+        if (args.size() < 2) {
             std::cout << "Usage: hypershare connect <ip_address>\n";
             return 1;
         }
-        std::cout << "Connecting to: " << argv[2] << "\n";
+        LOG_INFO("Connecting to peer: {}", args[1]);
+        std::cout << "Connecting to: " << args[1] << "\n";
         // TODO: Implement peer connection
     }
     else if (command == "status") {
