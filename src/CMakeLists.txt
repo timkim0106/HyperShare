@@ -11,6 +11,10 @@ add_library(hypershare_core
     network/network_manager.cpp
     network/udp_discovery.cpp
     network/connection_manager.cpp
+    crypto/crypto_types.cpp
+    crypto/random.cpp
+    crypto/key_manager.cpp
+    crypto/hash.cpp
 )
 
 target_include_directories(hypershare_core PUBLIC
