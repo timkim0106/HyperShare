@@ -9,6 +9,8 @@ add_library(hypershare_core
     network/tcp_client.cpp
     network/message_handler.cpp
     network/network_manager.cpp
+    network/udp_discovery.cpp
+    network/connection_manager.cpp
 )
 
 target_include_directories(hypershare_core PUBLIC
