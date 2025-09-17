@@ -1,8 +1,17 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <thread>
+#include <chrono>
+#include "hypershare/core/logger.hpp"
+#include "hypershare/core/config.hpp"
 
 int main(int argc, char* argv[]) {
+    hypershare::core::Config::instance().set_defaults();
+    hypershare::core::Logger::initialize();
+    
+    LOG_INFO("HyperShare starting up");
+    
     if (argc < 2) {
         std::cout << "HyperShare v1.0.0\n";
         std::cout << "Usage: hypershare <command> [options]\n\n";
@@ -17,8 +26,12 @@ int main(int argc, char* argv[]) {
     std::string command = argv[1];
     
     if (command == "start") {
+        auto& config = hypershare::core::Config::instance();
+        int port = config.get_int("server.port", 8080);
+        
+        LOG_INFO("Starting HyperShare daemon on port {}", port);
         std::cout << "Starting HyperShare daemon...\n";
-        std::cout << "Listening on port 8080\n";
+        std::cout << "Listening on port " << port << "\n";
         std::cout << "Press Ctrl+C to stop\n";
         
         // TODO: Implement daemon startup
