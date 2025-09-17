@@ -1,0 +1,16 @@
+{
+  "name": "hypershare",
+  "version": "1.0.0",
+  "description": "HyperShare P2P File Sharing System - A modern C++20 implementation",
+  "homepage": "https://github.com/hypershare/hypershare",
+  "license": "MIT",
+  "dependencies": [
+    "boost-asio",
+    "boost-system",
+    "libsodium",
+    "sqlite3",
+    "spdlog",
+    "gtest",
+    "benchmark"
+  ]
+}
