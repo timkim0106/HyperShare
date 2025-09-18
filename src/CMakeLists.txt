@@ -15,6 +15,8 @@ add_library(hypershare_core
     crypto/random.cpp
     crypto/key_manager.cpp
     crypto/hash.cpp
+    crypto/signature.cpp
+    crypto/secure_handshake.cpp
 )
 
 target_include_directories(hypershare_core PUBLIC
