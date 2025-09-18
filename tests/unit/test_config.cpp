@@ -87,7 +87,8 @@ TEST_F(ConfigTest, SaveToFile) {
     EXPECT_TRUE(config.save_to_file(test_file));
     EXPECT_TRUE(std::filesystem::exists(test_file));
     
-    Config new_config;
+    Config& new_config = Config::instance();
+    new_config.clear(); // Clear any existing values
     EXPECT_TRUE(new_config.load_from_file(test_file));
     EXPECT_EQ(new_config.get_string("test.key1"), "value1");
     EXPECT_EQ(new_config.get_string("test.key2"), "value2");

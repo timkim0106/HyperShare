@@ -211,7 +211,7 @@ static void BM_CompleteMessageWorkflow(benchmark::State& state) {
     
     for (auto _ : state) {
         // Create message
-        HandshakeMessage msg{state.iterations() % 100000, 8080, "Peer", 0};
+        HandshakeMessage msg{static_cast<std::uint32_t>(state.iterations() % 100000), 8080, "Peer", 0};
         
         // Serialize
         auto serialized = MessageSerializer::serialize_message(MessageType::HANDSHAKE, msg);
@@ -239,7 +239,7 @@ static void BM_NetworkThroughputSimulation(benchmark::State& state) {
     
     for (auto _ : state) {
         // Simulate network message processing for file transfer
-        ChunkDataMessage chunk{"file123", state.iterations() % 1000, data, "hash"};
+        ChunkDataMessage chunk{"file123", static_cast<std::uint64_t>(state.iterations() % 1000), data, "hash"};
         
         // Serialize (simulates sending)
         auto serialized = chunk.serialize();
