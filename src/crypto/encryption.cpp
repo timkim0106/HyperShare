@@ -97,7 +97,7 @@ EncryptedMessage EncryptedMessage::deserialize(std::span<const std::uint8_t> dat
 // EncryptionEngine implementation
 struct EncryptionEngine::Impl {
     bool initialized = false;
-    HashEngine hash_engine;
+    Blake3Hasher hash_engine;
     
     Impl() {
         if (sodium_init() < 0) {
@@ -266,8 +266,7 @@ ChaCha20Key EncryptionEngine::derive_key_from_secret(
     input.insert(input.end(), shared_secret.begin(), shared_secret.end());
     input.insert(input.end(), context.begin(), context.end());
     
-    Blake3Hash hash;
-    impl_->hash_engine.hash(input, std::span(hash));
+    auto hash = Blake3Hasher::hash(input);
     
     ChaCha20Key key;
     std::copy(hash.begin(), hash.begin() + CHACHA20_KEY_SIZE, key.begin());

@@ -104,7 +104,7 @@ namespace {
 
 struct SecureHandshake::Impl {
     SignatureEngine signature_engine;
-    HashEngine hash_engine;
+    Blake3Hasher hash_engine;
     ::RandomGenerator random_generator;
     
     // Trusted peers database (in production this would be persistent)
@@ -315,7 +315,7 @@ CryptoResult SecureHandshake::verify_ack_signature(
     const Ed25519PublicKey& peer_identity_key) const {
     
     auto context = create_handshake_context(
-        peer_identity_public_key,
+        peer_identity_public_key_,
         key_manager_->get_identity_keys().public_key,
         peer_ephemeral_public_key_,
         our_ephemeral_keys_.public_key
@@ -345,14 +345,13 @@ void SecureHandshake::reset() {
 }
 
 std::string SecureHandshake::get_peer_fingerprint(const Ed25519PublicKey& public_key) const {
-    Blake3Hash hash;
-    impl_->hash_engine.hash(std::span(public_key), std::span(hash));
+    auto hash = Blake3Hasher::hash(std::span(public_key));
     
     std::string fingerprint;
     for (size_t i = 0; i < 8; ++i) { // First 8 bytes for readable fingerprint
         if (i > 0) fingerprint += ":";
         char buf[3];
-        std::sprintf(buf, "%02x", hash[i]);
+        std::snprintf(buf, sizeof(buf), "%02x", hash[i]);
         fingerprint += buf;
     }
     return fingerprint;

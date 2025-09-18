@@ -161,12 +161,12 @@ SecureConnection::SecureConnection(
 SecureConnection::~SecureConnection() = default;
 
 bool SecureConnection::is_connected() const {
-    return base_connection_ && base_connection_->is_connected();
+    return base_connection_ && base_connection_->get_state() == ConnectionState::CONNECTED;
 }
 
 void SecureConnection::disconnect() {
     if (base_connection_) {
-        base_connection_->disconnect();
+        base_connection_->close();
     }
 }
 

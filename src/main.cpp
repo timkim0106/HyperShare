@@ -6,6 +6,7 @@
 #include "hypershare/core/logger.hpp"
 #include "hypershare/core/config.hpp"
 #include "hypershare/core/cli.hpp"
+#include "hypershare/core/utils.hpp"
 #include "hypershare/network/connection_manager.hpp"
 
 int main(int argc, char* argv[]) {

@@ -256,8 +256,8 @@ void NetworkManager::cleanup_disconnected_clients() {
 
 void NetworkManager::send_heartbeats() {
     HeartbeatMessage heartbeat{
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count(),
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count()),
         static_cast<std::uint32_t>(get_peer_count()),
         0 // TODO: Get actual file count
     };

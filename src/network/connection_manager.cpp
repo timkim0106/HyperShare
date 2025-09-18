@@ -355,8 +355,8 @@ void ConnectionManager::send_handshake(std::shared_ptr<Connection> connection) {
 
 void ConnectionManager::send_heartbeat(std::shared_ptr<Connection> connection) {
     HeartbeatMessage heartbeat{
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count(),
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count()),
         static_cast<std::uint32_t>(get_connection_count()),
         0 // TODO: Get actual file count
     };
