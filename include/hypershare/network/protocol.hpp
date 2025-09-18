@@ -17,6 +17,7 @@ enum class MessageType : std::uint8_t {
     HANDSHAKE_ACK   = 0x02,
     SECURE_HANDSHAKE = 0x05,
     SECURE_HANDSHAKE_ACK = 0x06,
+    ENCRYPTED_MESSAGE = 0x07,
     HEARTBEAT       = 0x03,
     DISCONNECT      = 0x04,
 
