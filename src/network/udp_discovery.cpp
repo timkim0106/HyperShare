@@ -9,7 +9,7 @@ UdpDiscovery::UdpDiscovery(std::uint16_t discovery_port)
     , running_(false)
     , io_context_()
     , socket_(io_context_)
-    , multicast_endpoint_(boost::asio::ip::address::from_string("239.255.42.99"), discovery_port)
+    , multicast_endpoint_(boost::asio::ip::make_address("239.255.42.99"), discovery_port)
     , local_peer_id_(0)
     , local_tcp_port_(0)
     , announcement_interval_(std::chrono::seconds(30))
@@ -220,8 +220,8 @@ void UdpDiscovery::send_announcement() {
         local_peer_id_,
         "0.0.0.0", // Will be replaced by receiver with actual IP
         local_tcp_port_,
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count()
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count())
     };
     
     auto payload = msg.serialize();
@@ -350,8 +350,8 @@ void UdpDiscovery::handle_peer_query(const boost::asio::ip::udp::endpoint& sende
         local_peer_id_,
         "0.0.0.0",
         local_tcp_port_,
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count()
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count())
     };
     
     auto payload = response.serialize();

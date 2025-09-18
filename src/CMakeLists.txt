@@ -33,7 +33,6 @@ add_executable(hypershare main.cpp)
 
 target_link_libraries(hypershare 
     hypershare_core
-    Boost::system
     PkgConfig::LIBSODIUM
     SQLite::SQLite3
     spdlog::spdlog
