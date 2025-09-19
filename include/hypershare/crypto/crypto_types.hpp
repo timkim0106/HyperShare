@@ -85,7 +85,10 @@ enum class CryptoError {
     BUFFER_TOO_SMALL,
     VERIFICATION_FAILED,
     RANDOM_GENERATION_FAILED,
-    INVALID_STATE
+    INVALID_STATE,
+    FILE_NOT_FOUND,
+    FILE_READ_ERROR,
+    FILE_WRITE_ERROR
 };
 
 struct CryptoResult {
