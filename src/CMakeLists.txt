@@ -19,6 +19,13 @@ add_library(hypershare_core
     crypto/signature.cpp
     crypto/secure_handshake.cpp
     crypto/encryption.cpp
+    storage/file_metadata.cpp
+    storage/chunk_manager.cpp
+    storage/file_index.cpp
+    storage/storage_config.cpp
+    transfer/transfer_session.cpp
+    transfer/flow_control.cpp
+    transfer/transfer_manager.cpp
 )
 
 target_include_directories(hypershare_core PUBLIC
@@ -27,6 +34,7 @@ target_include_directories(hypershare_core PUBLIC
 
 target_link_libraries(hypershare_core
     spdlog::spdlog
+    SQLite::SQLite3
 )
 
 add_executable(hypershare main.cpp)
