@@ -20,13 +20,17 @@ add_library(hypershare_core
     crypto/signature.cpp
     crypto/secure_handshake.cpp
     crypto/encryption.cpp
+    crypto/file_verification.cpp
     storage/file_metadata.cpp
     storage/chunk_manager.cpp
     storage/file_index.cpp
     storage/storage_config.cpp
+    storage/resume_manager.cpp
     transfer/transfer_session.cpp
     transfer/flow_control.cpp
     transfer/transfer_manager.cpp
+    transfer/bandwidth_limiter.cpp
+    transfer/performance_monitor.cpp
 )
 
 target_include_directories(hypershare_core PUBLIC
