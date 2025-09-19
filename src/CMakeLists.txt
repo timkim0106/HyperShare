@@ -12,6 +12,7 @@ add_library(hypershare_core
     network/udp_discovery.cpp
     network/connection_manager.cpp
     network/secure_message.cpp
+    network/file_protocol.cpp
     crypto/crypto_types.cpp
     crypto/random.cpp
     crypto/key_manager.cpp
