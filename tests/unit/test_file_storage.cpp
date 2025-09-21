@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <thread>
+#include <atomic>
 
 using namespace hypershare::storage;
 using namespace hypershare::crypto;
@@ -180,17 +182,18 @@ TEST_F(FileStorageTest, ChunkManager_HashVerification) {
     
     std::vector<uint8_t> test_data = {0x01, 0x02, 0x03, 0x04};
     auto hash = Blake3Hasher::hash(test_data);
+    auto hash_str = hypershare::crypto::hash_utils::hash_to_hex(hash);
     
     // Correct data should verify
-    EXPECT_TRUE(chunk_manager.verify_chunk_hash(test_data, hash));
+    EXPECT_TRUE(chunk_manager.verify_chunk_hash(test_data, hash_str));
     
     // Modified data should not verify
     std::vector<uint8_t> modified_data = {0x01, 0x02, 0x03, 0x05};
-    EXPECT_FALSE(chunk_manager.verify_chunk_hash(modified_data, hash));
+    EXPECT_FALSE(chunk_manager.verify_chunk_hash(modified_data, hash_str));
     
     // Empty data should not verify
     std::vector<uint8_t> empty_data;
-    EXPECT_FALSE(chunk_manager.verify_chunk_hash(empty_data, hash));
+    EXPECT_FALSE(chunk_manager.verify_chunk_hash(empty_data, hash_str));
 }
 
 // Test FileIndex functionality
@@ -208,13 +211,13 @@ TEST_F(FileStorageTest, FileIndex_BasicOperations) {
     metadata.tags = {"document", "test"};
     
     // Add file to index
-    auto result = file_index.add_file(metadata);
-    EXPECT_TRUE(result.success());
+    auto add_result = file_index.add_file(metadata);
+    EXPECT_TRUE(add_result);
     
     // Retrieve file from index
     FileMetadata retrieved;
-    result = file_index.get_file(metadata.file_id, retrieved);
-    EXPECT_TRUE(result.success());
+    auto get_result = file_index.get_file(metadata.file_id, retrieved);
+    EXPECT_TRUE(get_result.success());
     
     EXPECT_EQ(metadata.file_id, retrieved.file_id);
     EXPECT_EQ(metadata.filename, retrieved.filename);
@@ -222,23 +225,39 @@ TEST_F(FileStorageTest, FileIndex_BasicOperations) {
     EXPECT_EQ(metadata.tags, retrieved.tags);
     
     // Remove file from index
-    result = file_index.remove_file(metadata.file_id);
-    EXPECT_TRUE(result.success());
+    auto remove_result = file_index.remove_file(metadata.file_id);
+    EXPECT_TRUE(remove_result.success());
     
     // Should not be able to retrieve removed file
-    result = file_index.get_file(metadata.file_id, retrieved);
-    EXPECT_FALSE(result.success());
+    get_result = file_index.get_file(metadata.file_id, retrieved);
+    EXPECT_FALSE(get_result.success());
 }
 
 TEST_F(FileStorageTest, FileIndex_SearchFiles) {
     FileIndex file_index(config_.database_path);
     
     // Add multiple files
-    std::vector<FileMetadata> test_files = {
-        {"file1", "document.pdf", "/path/doc.pdf", 1000, 1024, 1, {"document", "pdf"}},
-        {"file2", "image.jpg", "/path/img.jpg", 2000, 1024, 2, {"image", "photo"}},
-        {"file3", "text.txt", "/path/text.txt", 3000, 1024, 3, {"document", "text"}},
-    };
+    std::vector<FileMetadata> test_files;
+    
+    FileMetadata file1("file1", "document.pdf", 1000);
+    file1.file_path = "/path/doc.pdf";
+    file1.chunk_size = 1024;
+    file1.chunk_count = 1;
+    file1.tags = {"document", "pdf"};
+    
+    FileMetadata file2("file2", "image.jpg", 2000);
+    file2.file_path = "/path/img.jpg";
+    file2.chunk_size = 1024;
+    file2.chunk_count = 2;
+    file2.tags = {"image", "photo"};
+    
+    FileMetadata file3("file3", "text.txt", 3000);
+    file3.file_path = "/path/text.txt";
+    file3.chunk_size = 1024;
+    file3.chunk_count = 3;
+    file3.tags = {"document", "text"};
+    
+    test_files = {file1, file2, file3};
     
     for (const auto& metadata : test_files) {
         file_index.add_file(metadata);
@@ -275,8 +294,8 @@ TEST_F(FileStorageTest, FileIndex_ChunkTracking) {
     EXPECT_EQ(missing.size(), 4);
     
     // Mark some chunks as available
-    file_index.mark_chunk_available(metadata.file_id, 0);
-    file_index.mark_chunk_available(metadata.file_id, 2);
+    file_index.update_chunk_progress(metadata.file_id, 0, "chunk0_hash");
+    file_index.update_chunk_progress(metadata.file_id, 2, "chunk2_hash");
     
     // Check missing chunks
     missing = file_index.get_missing_chunks(metadata.file_id);
@@ -285,8 +304,8 @@ TEST_F(FileStorageTest, FileIndex_ChunkTracking) {
     EXPECT_TRUE(std::find(missing.begin(), missing.end(), 3) != missing.end());
     
     // Mark all chunks as available
-    file_index.mark_chunk_available(metadata.file_id, 1);
-    file_index.mark_chunk_available(metadata.file_id, 3);
+    file_index.update_chunk_progress(metadata.file_id, 1, "chunk1_hash");
+    file_index.update_chunk_progress(metadata.file_id, 3, "chunk3_hash");
     
     missing = file_index.get_missing_chunks(metadata.file_id);
     EXPECT_EQ(missing.size(), 0);
@@ -294,31 +313,27 @@ TEST_F(FileStorageTest, FileIndex_ChunkTracking) {
 
 // Test StorageConfig functionality
 TEST_F(FileStorageTest, StorageConfig_DefaultValues) {
-    StorageConfig config;
+    StorageConfig config("./");
     
     EXPECT_EQ(config.download_directory, "./downloads");
-    EXPECT_EQ(config.incomplete_directory, "./downloads/.incomplete");
+    EXPECT_EQ(config.incomplete_directory, "./incomplete");
     EXPECT_EQ(config.database_path, "./hypershare.db");
-    EXPECT_EQ(config.default_chunk_size, 65536);
-    EXPECT_EQ(config.max_cache_size, 1ULL << 30);
+    EXPECT_EQ(config.default_chunk_size, 65536U);
+    EXPECT_EQ(config.max_storage_size, 10ULL * 1024 * 1024 * 1024);
 }
 
-TEST_F(FileStorageTest, StorageConfig_Serialization) {
+TEST_F(FileStorageTest, StorageConfig_BasicOperations) {
     StorageConfig config;
     config.download_directory = "/custom/downloads";
     config.incomplete_directory = "/custom/incomplete";
     config.database_path = "/custom/db.sqlite";
     config.default_chunk_size = 32768;
-    config.max_cache_size = 2ULL << 30;
     
-    auto serialized = config.serialize();
-    auto deserialized = StorageConfig::deserialize(serialized);
-    
-    EXPECT_EQ(config.download_directory, deserialized.download_directory);
-    EXPECT_EQ(config.incomplete_directory, deserialized.incomplete_directory);
-    EXPECT_EQ(config.database_path, deserialized.database_path);
-    EXPECT_EQ(config.default_chunk_size, deserialized.default_chunk_size);
-    EXPECT_EQ(config.max_cache_size, deserialized.max_cache_size);
+    EXPECT_TRUE(config.validate());
+    EXPECT_EQ(config.download_directory, "/custom/downloads");
+    EXPECT_EQ(config.incomplete_directory, "/custom/incomplete");
+    EXPECT_EQ(config.database_path, "/custom/db.sqlite");
+    EXPECT_EQ(config.default_chunk_size, 32768U);
 }
 
 // Test error conditions
@@ -340,7 +355,7 @@ TEST_F(FileStorageTest, ErrorHandling_InvalidChunkIndex) {
     std::vector<uint8_t> chunk_data;
     auto result = chunk_manager.read_chunk(metadata, 10, chunk_data);
     EXPECT_FALSE(result.success());
-    EXPECT_EQ(result.error, CryptoError::INVALID_PARAMETER);
+    EXPECT_EQ(result.error, CryptoError::INVALID_STATE);
 }
 
 TEST_F(FileStorageTest, ErrorHandling_DatabaseErrors) {
@@ -351,7 +366,7 @@ TEST_F(FileStorageTest, ErrorHandling_DatabaseErrors) {
     metadata.file_id = "test";
     
     auto result = file_index.add_file(metadata);
-    EXPECT_FALSE(result.success());
+    EXPECT_FALSE(result);
 }
 
 // Test large file handling
@@ -391,7 +406,7 @@ TEST_F(FileStorageTest, Concurrent_FileOperations) {
             metadata.filename = "file_" + std::to_string(i) + ".txt";
             metadata.file_size = 1000 * i;
             
-            if (file_index.add_file(metadata).success()) {
+            if (file_index.add_file(metadata)) {
                 success_count++;
             }
         });

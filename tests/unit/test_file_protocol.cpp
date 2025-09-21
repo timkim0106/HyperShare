@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 #include "hypershare/network/protocol.hpp"
-#include "hypershare/network/file_protocol.hpp"
 #include "hypershare/storage/file_metadata.hpp"
 #include <vector>
 #include <string>

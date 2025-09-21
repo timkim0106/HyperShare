@@ -118,7 +118,9 @@ struct SecureHandshake::Impl {
 SecureHandshake::SecureHandshake(std::shared_ptr<KeyManager> key_manager)
     : impl_(std::make_unique<Impl>())
     , key_manager_(std::move(key_manager))
-    , phase_(HandshakePhase::INITIATE) {
+    , phase_(HandshakePhase::INITIATE)
+    , rotation_counter_(0)
+    , pending_rotation_id_(0) {
     
     if (!key_manager_) {
         throw std::invalid_argument("KeyManager cannot be null");
@@ -342,6 +344,9 @@ void SecureHandshake::reset() {
     peer_identity_public_key_ = {};
     our_nonce_ = 0;
     peer_nonce_ = 0;
+    rotation_counter_ = 0;
+    pending_ephemeral_keys_ = {};
+    pending_rotation_id_ = 0;
 }
 
 std::string SecureHandshake::get_peer_fingerprint(const Ed25519PublicKey& public_key) const {
@@ -363,6 +368,139 @@ bool SecureHandshake::is_trusted_peer(const Ed25519PublicKey& public_key) const 
 
 void SecureHandshake::add_trusted_peer(const Ed25519PublicKey& public_key, const std::string& name) {
     impl_->trusted_peers[public_key] = name;
+}
+
+CryptoResult SecureHandshake::initiate_key_rotation(
+    KeyManager::SessionKeys& current_keys,
+    KeyManager::SessionKeys& new_keys) {
+    
+    if (phase_ != HandshakePhase::COMPLETE) {
+        return CryptoResult(CryptoError::INVALID_STATE, "Handshake not complete");
+    }
+    
+    // Generate new ephemeral keys for rotation
+    pending_ephemeral_keys_ = key_manager_->generate_ephemeral_keys();
+    pending_rotation_id_ = ++rotation_counter_;
+    
+    // Create rotation message
+    KeyRotationMessage rotation_msg;
+    rotation_msg.rotation_id = pending_rotation_id_;
+    rotation_msg.new_ephemeral_public_key = pending_ephemeral_keys_.public_key;
+    rotation_msg.nonce = impl_->random_generator.generate_uint64();
+    rotation_msg.timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    
+    // Sign the rotation message
+    auto signature_data = create_signature_data("KEY_ROTATION", rotation_msg.serialize_for_signature());
+    
+    auto sign_result = impl_->signature_engine.sign(
+        signature_data,
+        key_manager_->get_identity_keys().secret_key,
+        rotation_msg.signature
+    );
+    
+    if (!sign_result) {
+        return sign_result;
+    }
+    
+    // Derive new session keys using new ephemeral key
+    auto context = create_handshake_context(
+        key_manager_->get_identity_keys().public_key,
+        peer_identity_public_key_,
+        pending_ephemeral_keys_.public_key,
+        peer_ephemeral_public_key_
+    );
+    
+    new_keys = key_manager_->derive_session_keys(
+        pending_ephemeral_keys_.secret_key,
+        peer_ephemeral_public_key_,
+        context
+    );
+    
+    return CryptoResult();
+}
+
+CryptoResult SecureHandshake::respond_to_key_rotation(
+    const KeyRotationMessage& rotation_message,
+    KeyManager::SessionKeys& current_keys,
+    KeyManager::SessionKeys& new_keys) {
+    
+    if (phase_ != HandshakePhase::COMPLETE) {
+        return CryptoResult(CryptoError::INVALID_STATE, "Handshake not complete");
+    }
+    
+    // Verify rotation message signature
+    auto signature_data = create_signature_data("KEY_ROTATION", rotation_message.serialize_for_signature());
+    
+    auto verify_result = impl_->signature_engine.verify(
+        signature_data,
+        rotation_message.signature,
+        peer_identity_public_key_
+    );
+    
+    if (!verify_result) {
+        return verify_result;
+    }
+    
+    // Check timestamp to prevent replay attacks (within 5 minutes)
+    auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto msg_time = static_cast<std::uint64_t>(rotation_message.timestamp);
+    auto time_diff = (now > msg_time) ? (now - msg_time) : (msg_time - now);
+    
+    constexpr auto MAX_TIME_SKEW = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::minutes(5)).count();
+    
+    if (time_diff > static_cast<std::uint64_t>(MAX_TIME_SKEW)) {
+        return CryptoResult(CryptoError::VERIFICATION_FAILED, "Key rotation timestamp too old or future");
+    }
+    
+    // Update peer ephemeral key
+    peer_ephemeral_public_key_ = rotation_message.new_ephemeral_public_key;
+    
+    // Generate new ephemeral keys for our side
+    our_ephemeral_keys_ = key_manager_->generate_ephemeral_keys();
+    
+    // Derive new session keys
+    auto context = create_handshake_context(
+        peer_identity_public_key_,
+        key_manager_->get_identity_keys().public_key,
+        peer_ephemeral_public_key_,
+        our_ephemeral_keys_.public_key
+    );
+    
+    new_keys = key_manager_->derive_session_keys(
+        our_ephemeral_keys_.secret_key,
+        peer_ephemeral_public_key_,
+        context
+    );
+    
+    return CryptoResult();
+}
+
+bool SecureHandshake::should_rotate_keys(
+    const std::chrono::steady_clock::time_point& last_rotation,
+    std::uint64_t bytes_transferred) const {
+    
+    auto now = std::chrono::steady_clock::now();
+    auto time_since_rotation = now - last_rotation;
+    
+    // Force rotation after maximum time
+    if (time_since_rotation >= KEY_ROTATION_MAX_TIME) {
+        return true;
+    }
+    
+    // Rotate if we've transferred enough data
+    if (bytes_transferred >= KEY_ROTATION_BYTES_THRESHOLD) {
+        return true;
+    }
+    
+    // Rotate if enough time has passed
+    if (time_since_rotation >= KEY_ROTATION_TIME_THRESHOLD) {
+        return true;
+    }
+    
+    return false;
 }
 
 // Message serialization implementations
@@ -433,6 +571,37 @@ SecureHandshakeAckMessage SecureHandshakeAckMessage::deserialize(std::span<const
     msg.ephemeral_public_key = read_array<X25519_PUBLIC_KEY_SIZE>(span);
     msg.nonce = read_uint64(span);
     msg.response_nonce = read_uint64(span);
+    msg.signature = read_array<ED25519_SIGNATURE_SIZE>(span);
+    return msg;
+}
+
+std::vector<std::uint8_t> KeyRotationMessage::serialize() const {
+    std::vector<std::uint8_t> buffer;
+    write_uint64(buffer, rotation_id);
+    write_array(buffer, std::span(new_ephemeral_public_key));
+    write_uint64(buffer, nonce);
+    write_uint64(buffer, timestamp);
+    write_array(buffer, std::span(signature));
+    return buffer;
+}
+
+std::vector<std::uint8_t> KeyRotationMessage::serialize_for_signature() const {
+    std::vector<std::uint8_t> buffer;
+    write_uint64(buffer, rotation_id);
+    write_array(buffer, std::span(new_ephemeral_public_key));
+    write_uint64(buffer, nonce);
+    write_uint64(buffer, timestamp);
+    // Note: signature is NOT included in signature data
+    return buffer;
+}
+
+KeyRotationMessage KeyRotationMessage::deserialize(std::span<const std::uint8_t> data) {
+    KeyRotationMessage msg;
+    auto span = data;
+    msg.rotation_id = read_uint64(span);
+    msg.new_ephemeral_public_key = read_array<X25519_PUBLIC_KEY_SIZE>(span);
+    msg.nonce = read_uint64(span);
+    msg.timestamp = read_uint64(span);
     msg.signature = read_array<ED25519_SIGNATURE_SIZE>(span);
     return msg;
 }

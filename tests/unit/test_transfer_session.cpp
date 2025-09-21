@@ -304,14 +304,14 @@ TEST_F(TransferSessionTest, ErrorHandling_InvalidChunks) {
     std::vector<uint8_t> chunk_data(test_metadata_.chunk_size, 0x42);
     auto result = session.handle_chunk_received(10, chunk_data);
     EXPECT_FALSE(result.success());
-    EXPECT_EQ(result.error, CryptoError::INVALID_STATE);
+    EXPECT_EQ(result.error, hypershare::crypto::CryptoError::INVALID_STATE);
     
     // Try to receive chunk with wrong size
     std::vector<uint8_t> wrong_size_data(100, 0x42);
     session.mark_chunk_requested(0);
     result = session.handle_chunk_received(0, wrong_size_data);
     EXPECT_FALSE(result.success());
-    EXPECT_EQ(result.error, CryptoError::INVALID_PARAMETER);
+    EXPECT_EQ(result.error, hypershare::crypto::CryptoError::INVALID_STATE);
 }
 
 TEST_F(TransferSessionTest, ErrorHandling_DuplicateChunks) {

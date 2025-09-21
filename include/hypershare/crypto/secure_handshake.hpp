@@ -48,6 +48,23 @@ struct SecureHandshakeAckMessage {
     static SecureHandshakeAckMessage deserialize(std::span<const std::uint8_t> data);
 };
 
+struct KeyRotationMessage {
+    std::uint64_t rotation_id;
+    X25519PublicKey new_ephemeral_public_key;
+    std::uint64_t nonce;
+    std::uint64_t timestamp;
+    Ed25519Signature signature;
+    
+    std::vector<std::uint8_t> serialize() const;
+    std::vector<std::uint8_t> serialize_for_signature() const;
+    static KeyRotationMessage deserialize(std::span<const std::uint8_t> data);
+};
+
+// Key rotation constants
+constexpr std::uint64_t KEY_ROTATION_BYTES_THRESHOLD = 1ULL << 30; // 1GB
+constexpr std::chrono::minutes KEY_ROTATION_TIME_THRESHOLD{60};    // 1 hour
+constexpr std::chrono::minutes KEY_ROTATION_MAX_TIME{120};         // 2 hours max
+
 class SecureHandshake {
 public:
     explicit SecureHandshake(std::shared_ptr<KeyManager> key_manager);
@@ -95,6 +112,24 @@ public:
     HandshakePhase get_phase() const;
     void reset();
     
+    // Session key rotation
+    CryptoResult initiate_key_rotation(
+        KeyManager::SessionKeys& current_keys,
+        KeyManager::SessionKeys& new_keys
+    );
+    
+    CryptoResult respond_to_key_rotation(
+        const KeyRotationMessage& rotation_message,
+        KeyManager::SessionKeys& current_keys,
+        KeyManager::SessionKeys& new_keys
+    );
+    
+    // Key rotation triggers
+    bool should_rotate_keys(
+        const std::chrono::steady_clock::time_point& last_rotation,
+        std::uint64_t bytes_transferred
+    ) const;
+    
     // Utility functions
     std::string get_peer_fingerprint(const Ed25519PublicKey& public_key) const;
     bool is_trusted_peer(const Ed25519PublicKey& public_key) const;
@@ -114,6 +149,11 @@ private:
     std::uint64_t our_nonce_;
     std::uint64_t peer_nonce_;
     std::chrono::steady_clock::time_point handshake_start_time_;
+    
+    // Key rotation state
+    std::uint64_t rotation_counter_;
+    X25519KeyPair pending_ephemeral_keys_;
+    std::uint64_t pending_rotation_id_;
 };
 
 // Helper functions for message construction
@@ -134,3 +174,4 @@ std::vector<std::uint8_t> create_handshake_context(
 // Ensure SecureHandshakeMessage satisfies MessagePayload concept
 static_assert(hypershare::network::MessagePayload<hypershare::crypto::SecureHandshakeMessage>);
 static_assert(hypershare::network::MessagePayload<hypershare::crypto::SecureHandshakeAckMessage>);
+static_assert(hypershare::network::MessagePayload<hypershare::crypto::KeyRotationMessage>);
