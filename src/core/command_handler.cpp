@@ -35,8 +35,18 @@ CommandResult ShareCommandHandler::execute(const std::vector<std::string>& args)
         hypershare::storage::ChunkManager chunk_manager(*storage_config_);
         hypershare::storage::FileIndex file_index(storage_config_->database_path);
         
+        // Initialize the database
+        if (!file_index.initialize()) {
+            return CommandResult::error("Failed to initialize file database");
+        }
+        
         // Create file metadata
         hypershare::storage::FileMetadata metadata;
+        
+        // Set basic file information before chunking
+        metadata.filename = file_path.filename().string();
+        metadata.file_path = std::filesystem::absolute(file_path).string();
+        metadata.file_id = metadata.filename + "_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
         
         std::cout << "Processing file: " << file_path.filename() << "\n";
         std::cout << "Calculating chunks and hashes...\n";
@@ -89,6 +99,7 @@ CommandResult ConnectCommandHandler::execute(const std::vector<std::string>& arg
         
         // Initialize storage for file discovery
         hypershare::storage::FileIndex file_index(storage_config_->database_path);
+        file_index.initialize(); // Initialize database (ignore result for connect command)
         
         // List available files from peer (simulated for now)
         auto local_files = file_index.list_files();
@@ -127,6 +138,7 @@ StatusCommandHandler::StatusCommandHandler()
 CommandResult StatusCommandHandler::execute(const std::vector<std::string>& args) {
     try {
         hypershare::storage::FileIndex file_index(storage_config_->database_path);
+        file_index.initialize(); // Initialize database
         auto shared_files = file_index.list_files();
         auto file_count = file_index.get_file_count();
         auto total_size = file_index.get_total_size();
