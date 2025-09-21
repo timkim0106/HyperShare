@@ -3,6 +3,8 @@ add_library(hypershare_core
     core/config.cpp
     core/utils.cpp
     core/cli.cpp
+    core/command_handler.cpp
+    core/command_registry.cpp
     network/protocol.cpp
     network/connection.cpp
     network/tcp_server.cpp
