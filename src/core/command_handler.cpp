@@ -155,6 +155,8 @@ CommandResult StatusCommandHandler::execute(const std::vector<std::string>& args
             std::cout << "\nShared files:\n";
             for (const auto& file : shared_files) {
                 std::cout << "  - " << file.filename << " (" << file.file_size << " bytes)\n";
+                std::cout << "    File ID: " << file.file_id << "\n";
+                std::cout << "    File Hash: " << file.file_hash << "\n";
             }
         }
         
@@ -176,6 +178,90 @@ CommandResult PeersCommandHandler::execute(const std::vector<std::string>& args)
     std::cout << "(Peer discovery requires daemon to be running: 'hypershare start')\n";
     
     return CommandResult::ok();
+}
+
+// DownloadCommandHandler Implementation
+DownloadCommandHandler::DownloadCommandHandler()
+    : storage_config_(std::make_unique<hypershare::storage::StorageConfig>("./hypershare_data")) {
+}
+
+CommandResult DownloadCommandHandler::execute(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        return CommandResult::error("Usage: " + get_usage());
+    }
+    
+    std::string file_id = args[1];
+    std::string output_path = args.size() > 2 ? args[2] : "./downloads/";
+    
+    LOG_INFO("Downloading file: {}", file_id);
+    
+    try {
+        // Initialize storage components
+        hypershare::storage::FileIndex file_index(storage_config_->database_path);
+        if (!file_index.initialize()) {
+            return CommandResult::error("Failed to initialize file database");
+        }
+        
+        // Try to find file by file_hash first
+        auto metadata_opt = file_index.get_file(file_id);
+        
+        // If not found by hash, search through all files for matching file_id
+        if (!metadata_opt) {
+            auto all_files = file_index.list_files();
+            for (const auto& file : all_files) {
+                if (file.file_id == file_id) {
+                    metadata_opt = file;
+                    break;
+                }
+            }
+        }
+        
+        if (!metadata_opt) {
+            return CommandResult::error("File not found: " + file_id + "\nUse 'hypershare status' to see available files");
+        }
+        
+        auto metadata = *metadata_opt;
+        
+        std::cout << "Found file: " << metadata.filename << "\n";
+        std::cout << "Size: " << metadata.file_size << " bytes\n";
+        std::cout << "Chunks: " << metadata.chunk_count << "\n";
+        
+        // For now, simulate the download process
+        // In a real implementation, this would:
+        // 1. Connect to peers that have this file
+        // 2. Use TransferManager to coordinate chunk downloads
+        // 3. Reassemble chunks into the complete file
+        
+        std::cout << "Downloading from peers...\n";
+        
+        // Create output directory if needed
+        std::filesystem::path output_dir(output_path);
+        if (!std::filesystem::exists(output_dir)) {
+            std::filesystem::create_directories(output_dir);
+        }
+        
+        // For demonstration, check if we have the file locally (self-download)
+        std::filesystem::path local_file_path = metadata.file_path;
+        std::filesystem::path output_file_path = output_dir / metadata.filename;
+        
+        if (std::filesystem::exists(local_file_path)) {
+            // Simulate download by copying the file
+            std::filesystem::copy_file(local_file_path, output_file_path, 
+                                     std::filesystem::copy_options::overwrite_existing);
+            
+            std::cout << "✓ Download completed!\n";
+            std::cout << "File saved to: " << output_file_path << "\n";
+            std::cout << "\nNote: This was a local copy simulation.\n";
+            std::cout << "Real peer-to-peer downloads will be implemented in the next phase.\n";
+            
+            return CommandResult::ok("File downloaded successfully");
+        } else {
+            return CommandResult::error("File not available locally. Peer-to-peer downloads not yet implemented.");
+        }
+        
+    } catch (const std::exception& e) {
+        return CommandResult::error("Download failed: " + std::string(e.what()));
+    }
 }
 
 // StartCommandHandler Implementation  

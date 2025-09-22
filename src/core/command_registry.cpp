@@ -10,6 +10,7 @@ CommandRegistry::CommandRegistry() {
     register_command("connect", std::make_unique<ConnectCommandHandler>());
     register_command("status", std::make_unique<StatusCommandHandler>());
     register_command("peers", std::make_unique<PeersCommandHandler>());
+    register_command("download", std::make_unique<DownloadCommandHandler>());
 }
 
 void CommandRegistry::register_command(const std::string& name, std::unique_ptr<CommandHandler> handler) {

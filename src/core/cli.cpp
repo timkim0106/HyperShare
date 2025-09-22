@@ -165,6 +165,7 @@ void CommandLineParser::print_help() const {
     std::cout << "  start     Start HyperShare daemon\n";
     std::cout << "  share     Share a file\n";
     std::cout << "  connect   Connect to a peer\n";
+    std::cout << "  download  Download a file from peers\n";
     std::cout << "  status    Show current status\n";
     std::cout << "  peers     List connected peers\n";
 }
