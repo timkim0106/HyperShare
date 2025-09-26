@@ -3,11 +3,13 @@
 #include "hypershare/network/connection_manager.hpp"
 #include "hypershare/network/file_announcer.hpp"
 #include "hypershare/storage/file_index.hpp"
+#include "hypershare/transfer/performance_monitor.hpp"
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <sstream>
 #include <algorithm>
+#include <iomanip>
 
 namespace hypershare::core {
 
@@ -155,6 +157,8 @@ void IPCServer::handle_client(int client_fd) {
             response = handle_peers_command(request);
         } else if (request.command == "files") {
             response = handle_files_command(request);
+        } else if (request.command == "transfers") {
+            response = handle_transfers_command(request);
         } else {
             response.success = false;
             response.message = "Unknown command: " + request.command;
@@ -267,6 +271,53 @@ IPCResponse IPCServer::handle_files_command(const IPCRequest& request) {
     } catch (const std::exception& e) {
         response.success = false;
         response.message = "Failed to get files: " + std::string(e.what());
+    }
+    
+    return response;
+}
+
+IPCResponse IPCServer::handle_transfers_command(const IPCRequest& request) {
+    IPCResponse response;
+    response.success = true;
+    response.message = "Transfer statistics retrieved successfully";
+    
+    try {
+        if (performance_monitor_) {
+            auto all_sessions = performance_monitor_->get_all_session_stats();
+            response.data["session_count"] = std::to_string(all_sessions.size());
+            
+            if (!all_sessions.empty()) {
+                std::stringstream transfers_info;
+                for (size_t i = 0; i < all_sessions.size(); ++i) {
+                    const auto& stats = all_sessions[i];
+                    if (i > 0) transfers_info << ";";
+                    
+                    transfers_info << stats.session_id << ":" 
+                                  << stats.total_bytes << ":"
+                                  << stats.bytes_transferred << ":"
+                                  << std::fixed << std::setprecision(1) << stats.percentage_complete << ":"
+                                  << stats.current_speed_bps << ":"
+                                  << stats.average_speed_bps << ":"
+                                  << stats.estimated_time_remaining.count();
+                }
+                response.data["transfers"] = transfers_info.str();
+            } else {
+                response.data["transfers"] = "";
+            }
+            
+            // Global statistics
+            response.data["total_bytes_transferred"] = std::to_string(performance_monitor_->get_total_bytes_transferred());
+            response.data["global_speed"] = std::to_string(performance_monitor_->get_current_global_speed());
+        } else {
+            response.data["session_count"] = "0";
+            response.data["transfers"] = "";
+            response.data["total_bytes_transferred"] = "0";
+            response.data["global_speed"] = "0";
+        }
+        
+    } catch (const std::exception& e) {
+        response.success = false;
+        response.message = "Failed to get transfer statistics: " + std::string(e.what());
     }
     
     return response;

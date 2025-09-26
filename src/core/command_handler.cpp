@@ -9,6 +9,8 @@
 #include "hypershare/network/file_announcer.hpp"
 #include "hypershare/core/ipc_server.hpp"
 #include "hypershare/core/ipc_client.hpp"
+#include "hypershare/transfer/performance_monitor.hpp"
+#include "hypershare/transfer/transfer_manager.hpp"
 #include <filesystem>
 #include <iostream>
 #include <thread>
@@ -191,7 +193,44 @@ CommandResult StatusCommandHandler::execute(const std::vector<std::string>& args
             // Daemon is running, get live data
             std::cout << "HyperShare Status (Live from Daemon):\n";
             std::cout << "Connected peers: " << response->data.at("peer_count") << "\n";
-            std::cout << "Active transfers: 0\n"; // TODO: implement transfer tracking
+            
+            // Get transfer statistics
+            hypershare::core::IPCRequest transfer_request;
+            transfer_request.command = "transfers";
+            auto transfer_response = ipc_client.send_request(transfer_request);
+            
+            if (transfer_response && transfer_response->success) {
+                int active_transfers = std::stoi(transfer_response->data.at("session_count"));
+                std::cout << "Active transfers: " << active_transfers << "\n";
+                
+                if (active_transfers > 0) {
+                    auto global_speed = std::stoull(transfer_response->data.at("global_speed"));
+                    auto total_transferred = std::stoull(transfer_response->data.at("total_bytes_transferred"));
+                    
+                    std::cout << "Global transfer speed: ";
+                    if (global_speed > 1024 * 1024) {
+                        std::cout << (global_speed / (1024 * 1024)) << " MB/s\n";
+                    } else if (global_speed > 1024) {
+                        std::cout << (global_speed / 1024) << " KB/s\n";
+                    } else {
+                        std::cout << global_speed << " B/s\n";
+                    }
+                    
+                    std::cout << "Total transferred: ";
+                    if (total_transferred > 1024 * 1024 * 1024) {
+                        std::cout << (total_transferred / (1024 * 1024 * 1024)) << " GB\n";
+                    } else if (total_transferred > 1024 * 1024) {
+                        std::cout << (total_transferred / (1024 * 1024)) << " MB\n";
+                    } else if (total_transferred > 1024) {
+                        std::cout << (total_transferred / 1024) << " KB\n";
+                    } else {
+                        std::cout << total_transferred << " bytes\n";
+                    }
+                }
+            } else {
+                std::cout << "Active transfers: 0\n";
+            }
+            
             std::cout << "Files shared: " << response->data.at("file_count") << "\n";
             std::cout << "Total shared size: " << response->data.at("total_size") << " bytes\n";
             std::cout << "Storage location: " << storage_config_->download_directory << "\n";
@@ -437,10 +476,14 @@ CommandResult StartCommandHandler::execute(const std::vector<std::string>& args)
     // Set up file announcer
     connection_manager->initialize_file_announcer(file_index);
     
+    // Set up performance monitor
+    auto performance_monitor = std::make_shared<hypershare::transfer::PerformanceMonitor>();
+    
     // Set up IPC server
     auto ipc_server = std::make_unique<hypershare::core::IPCServer>();
     ipc_server->set_connection_manager(connection_manager);
     ipc_server->set_file_index(file_index);
+    ipc_server->set_performance_monitor(performance_monitor);
     
     if (!ipc_server->start()) {
         LOG_ERROR("Failed to start IPC server");
@@ -468,6 +511,141 @@ CommandResult StartCommandHandler::execute(const std::vector<std::string>& args)
     }
     
     return CommandResult::ok();
+}
+
+// TransfersCommandHandler Implementation
+TransfersCommandHandler::TransfersCommandHandler() = default;
+
+CommandResult TransfersCommandHandler::execute(const std::vector<std::string>& args) {
+    try {
+        // Try to get transfer statistics from running daemon
+        hypershare::core::IPCClient ipc_client;
+        
+        hypershare::core::IPCRequest request;
+        request.command = "transfers";
+        
+        auto response = ipc_client.send_request(request);
+        
+        if (response && response->success) {
+            // Daemon is running, show detailed transfer data
+            int active_transfers = std::stoi(response->data.at("session_count"));
+            
+            std::cout << "Transfer Statistics (Live from Daemon):\n\n";
+            
+            if (active_transfers == 0) {
+                std::cout << "No active transfers.\n";
+            } else {
+                // Show global statistics
+                auto global_speed = std::stoull(response->data.at("global_speed"));
+                auto total_transferred = std::stoull(response->data.at("total_bytes_transferred"));
+                
+                std::cout << "Global Statistics:\n";
+                std::cout << "  Active sessions: " << active_transfers << "\n";
+                std::cout << "  Combined speed: ";
+                if (global_speed > 1024 * 1024) {
+                    std::cout << (global_speed / (1024 * 1024)) << " MB/s\n";
+                } else if (global_speed > 1024) {
+                    std::cout << (global_speed / 1024) << " KB/s\n";
+                } else {
+                    std::cout << global_speed << " B/s\n";
+                }
+                
+                std::cout << "  Total transferred: ";
+                if (total_transferred > 1024 * 1024 * 1024) {
+                    std::cout << (total_transferred / (1024 * 1024 * 1024)) << " GB\n";
+                } else if (total_transferred > 1024 * 1024) {
+                    std::cout << (total_transferred / (1024 * 1024)) << " MB\n";
+                } else if (total_transferred > 1024) {
+                    std::cout << (total_transferred / 1024) << " KB\n";
+                } else {
+                    std::cout << total_transferred << " bytes\n";
+                }
+                
+                // Show individual transfer sessions
+                std::string transfers_info = response->data.at("transfers");
+                if (!transfers_info.empty()) {
+                    std::cout << "\nActive Transfer Sessions:\n";
+                    
+                    std::istringstream transfers_stream(transfers_info);
+                    std::string transfer_entry;
+                    int index = 1;
+                    
+                    while (std::getline(transfers_stream, transfer_entry, ';')) {
+                        if (transfer_entry.empty()) continue;
+                        
+                        // Parse session_id:total_bytes:bytes_transferred:percentage:current_speed:avg_speed:eta_ms
+                        std::istringstream entry_stream(transfer_entry);
+                        std::string session_id, total_bytes_str, transferred_str, percentage_str;
+                        std::string current_speed_str, avg_speed_str, eta_str;
+                        
+                        if (std::getline(entry_stream, session_id, ':') &&
+                            std::getline(entry_stream, total_bytes_str, ':') &&
+                            std::getline(entry_stream, transferred_str, ':') &&
+                            std::getline(entry_stream, percentage_str, ':') &&
+                            std::getline(entry_stream, current_speed_str, ':') &&
+                            std::getline(entry_stream, avg_speed_str, ':') &&
+                            std::getline(entry_stream, eta_str, ':')) {
+                            
+                            auto total_bytes = std::stoull(total_bytes_str);
+                            auto transferred = std::stoull(transferred_str);
+                            auto percentage = std::stod(percentage_str);
+                            auto current_speed = std::stoull(current_speed_str);
+                            auto avg_speed = std::stoull(avg_speed_str);
+                            auto eta_ms = std::stoull(eta_str);
+                            
+                            std::cout << "  [" << index++ << "] Session: " << session_id << "\n";
+                            std::cout << "      Progress: " << transferred << "/" << total_bytes 
+                                      << " bytes (" << std::fixed << std::setprecision(1) 
+                                      << percentage << "%)\n";
+                            
+                            std::cout << "      Current speed: ";
+                            if (current_speed > 1024 * 1024) {
+                                std::cout << (current_speed / (1024 * 1024)) << " MB/s";
+                            } else if (current_speed > 1024) {
+                                std::cout << (current_speed / 1024) << " KB/s";
+                            } else {
+                                std::cout << current_speed << " B/s";
+                            }
+                            
+                            std::cout << "  Average: ";
+                            if (avg_speed > 1024 * 1024) {
+                                std::cout << (avg_speed / (1024 * 1024)) << " MB/s\n";
+                            } else if (avg_speed > 1024) {
+                                std::cout << (avg_speed / 1024) << " KB/s\n";
+                            } else {
+                                std::cout << avg_speed << " B/s\n";
+                            }
+                            
+                            if (eta_ms > 0) {
+                                std::cout << "      ETA: ";
+                                if (eta_ms > 60000) {
+                                    std::cout << (eta_ms / 60000) << "m " << ((eta_ms % 60000) / 1000) << "s\n";
+                                } else if (eta_ms > 1000) {
+                                    std::cout << (eta_ms / 1000) << "s\n";
+                                } else {
+                                    std::cout << eta_ms << "ms\n";
+                                }
+                            } else {
+                                std::cout << "      ETA: Calculating...\n";
+                            }
+                            std::cout << "\n";
+                        }
+                    }
+                }
+            }
+            
+        } else {
+            // Daemon not running
+            std::cout << "Transfer Statistics:\n";
+            std::cout << "No transfer data available (daemon not running)\n";
+            std::cout << "Start the daemon with 'hypershare start' to enable transfer monitoring.\n";
+        }
+        
+        return CommandResult::ok();
+        
+    } catch (const std::exception& e) {
+        return CommandResult::error("Failed to get transfer statistics: " + std::string(e.what()));
+    }
 }
 
 }
