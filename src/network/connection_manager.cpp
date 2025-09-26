@@ -1,4 +1,5 @@
 #include "hypershare/network/connection_manager.hpp"
+#include "hypershare/network/file_announcer.hpp"
 #include "hypershare/core/logger.hpp"
 #include <random>
 
@@ -51,6 +52,11 @@ bool ConnectionManager::start(std::uint16_t tcp_port, std::uint16_t udp_port) {
             handle_heartbeat(conn, msg);
         });
     
+    network_manager_->register_message_handler<FileAnnounceMessage>(MessageType::FILE_ANNOUNCE,
+        [this](std::shared_ptr<Connection> conn, const FileAnnounceMessage& msg) {
+            handle_file_announce(conn, msg);
+        });
+    
     // Set up discovery handlers
     discovery_->set_peer_discovered_handler(
         [this](const PeerInfo& peer) {
@@ -78,6 +84,11 @@ bool ConnectionManager::start(std::uint16_t tcp_port, std::uint16_t udp_port) {
     discovery_->announce_self(local_peer_id_, tcp_port, local_peer_name_);
     
     running_ = true;
+    
+    // Start file announcer if initialized
+    if (file_announcer_) {
+        file_announcer_->start();
+    }
     
     // Start health check thread
     health_check_thread_ = std::thread([this]() {
@@ -108,6 +119,11 @@ void ConnectionManager::stop() {
     
     disconnect_all();
     
+    if (file_announcer_) {
+        file_announcer_->stop();
+        file_announcer_.reset();
+    }
+    
     if (discovery_) {
         discovery_->stop();
         discovery_.reset();
@@ -128,6 +144,16 @@ void ConnectionManager::set_local_info(std::uint32_t peer_id, const std::string&
     }
     
     LOG_INFO("Updated local peer info: ID={}, name='{}'", peer_id, peer_name);
+}
+
+void ConnectionManager::initialize_file_announcer(std::shared_ptr<hypershare::storage::FileIndex> file_index) {
+    file_announcer_ = std::make_shared<FileAnnouncer>(shared_from_this(), file_index);
+    
+    if (running_) {
+        file_announcer_->start();
+    }
+    
+    LOG_INFO("File announcer initialized");
 }
 
 bool ConnectionManager::connect_to_peer(const std::string& host, std::uint16_t port) {
@@ -331,6 +357,14 @@ void ConnectionManager::handle_heartbeat(std::shared_ptr<Connection> connection,
     if (it != connections_.end()) {
         it->second.last_heartbeat = std::chrono::steady_clock::now();
         LOG_DEBUG("Received heartbeat from peer {}", it->second.peer_id);
+    }
+}
+
+void ConnectionManager::handle_file_announce(std::shared_ptr<Connection> connection, const FileAnnounceMessage& msg) {
+    if (file_announcer_) {
+        file_announcer_->handle_file_announce(connection, msg);
+    } else {
+        LOG_WARN("Received file announce but file announcer not initialized");
     }
 }
 

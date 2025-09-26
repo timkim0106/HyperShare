@@ -4,7 +4,11 @@
 #include "hypershare/storage/chunk_manager.hpp"
 #include "hypershare/storage/file_metadata.hpp"
 #include "hypershare/storage/file_index.hpp"
+#include "hypershare/storage/storage_config.hpp"
 #include "hypershare/network/connection_manager.hpp"
+#include "hypershare/network/file_announcer.hpp"
+#include "hypershare/core/ipc_server.hpp"
+#include "hypershare/core/ipc_client.hpp"
 #include <filesystem>
 #include <iostream>
 #include <thread>
@@ -97,33 +101,71 @@ CommandResult ConnectCommandHandler::execute(const std::vector<std::string>& arg
         std::cout << "Connecting to peer: " << peer_ip << ":" << tcp_port << "\n";
         std::cout << "Establishing connection...\n";
         
-        // Initialize storage for file discovery
-        hypershare::storage::FileIndex file_index(storage_config_->database_path);
-        file_index.initialize(); // Initialize database (ignore result for connect command)
+        // Create connection manager for this connection
+        auto connection_manager = std::make_shared<hypershare::network::ConnectionManager>();
         
-        // List available files from peer (simulated for now)
-        auto local_files = file_index.list_files();
+        // Initialize storage for file announcements
+        auto storage_config = std::make_unique<hypershare::storage::StorageConfig>("./hypershare_data");
+        storage_config->create_directories();
+        auto file_index = std::make_shared<hypershare::storage::FileIndex>(storage_config->database_path);
+        file_index->initialize();
         
-        std::cout << "✓ Connection established!\n";
-        std::cout << "Available files on this peer:\n";
+        // Set up file announcer to receive remote file announcements
+        connection_manager->initialize_file_announcer(file_index);
         
-        if (local_files.empty()) {
-            std::cout << "  No files shared yet. Use 'hypershare share <filename>' to share files.\n";
-        } else {
-            for (size_t i = 0; i < local_files.size(); ++i) {
-                const auto& file = local_files[i];
-                std::cout << "  [" << i + 1 << "] " << file.filename 
-                          << " (" << file.file_size << " bytes, " 
-                          << file.chunk_count << " chunks)\n";
-                std::cout << "      File ID: " << file.file_id << "\n";
-            }
-            
-            std::cout << "\nTo download a file, you would typically use:\n";
-            std::cout << "  hypershare download <file_id>\n";
-            std::cout << "(Download functionality to be implemented in next phase)\n";
+        // Start connection manager (this will create our local networking stack)
+        int local_tcp_port = tcp_port + 1; // Use a different port to avoid conflict
+        if (!connection_manager->start(local_tcp_port, 0)) { // 0 = disable UDP discovery for client
+            return CommandResult::error("Failed to initialize networking");
         }
         
-        return CommandResult::ok("Connected successfully");
+        // Connect to the remote peer
+        if (!connection_manager->connect_to_peer(peer_ip, tcp_port)) {
+            connection_manager->stop();
+            return CommandResult::error("Failed to connect to peer at " + peer_ip + ":" + std::to_string(tcp_port));
+        }
+        
+        std::cout << "✓ Connection established!\n";
+        std::cout << "Waiting for file announcements from peer...\n";
+        
+        // Wait for file announcements
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+        
+        // Get remote files from the file announcer
+        auto file_announcer = connection_manager->get_file_announcer();
+        if (file_announcer) {
+            auto remote_files = file_announcer->get_remote_files();
+            
+            std::cout << "Available files from peer " << peer_ip << ":\n";
+            
+            if (remote_files.empty()) {
+                std::cout << "  No files shared by this peer.\n";
+            } else {
+                for (size_t i = 0; i < remote_files.size(); ++i) {
+                    const auto& file = remote_files[i];
+                    std::cout << "  [" << i + 1 << "] " << file.filename 
+                              << " (" << file.file_size << " bytes)\n";
+                    std::cout << "      File ID: " << file.file_id << "\n";
+                    std::cout << "      Hash: " << file.file_hash << "\n";
+                    if (!file.tags.empty()) {
+                        std::cout << "      Tags: ";
+                        for (size_t j = 0; j < file.tags.size(); ++j) {
+                            if (j > 0) std::cout << ", ";
+                            std::cout << file.tags[j];
+                        }
+                        std::cout << "\n";
+                    }
+                }
+                
+                std::cout << "\nTo download a file, use:\n";
+                std::cout << "  hypershare download <file_id>\n";
+            }
+        }
+        
+        // Clean up
+        connection_manager->stop();
+        
+        return CommandResult::ok("Connected and discovered files successfully");
         
     } catch (const std::exception& e) {
         return CommandResult::error("Failed to connect to peer: " + std::string(e.what()));
@@ -137,30 +179,84 @@ StatusCommandHandler::StatusCommandHandler()
 
 CommandResult StatusCommandHandler::execute(const std::vector<std::string>& args) {
     try {
-        hypershare::storage::FileIndex file_index(storage_config_->database_path);
-        file_index.initialize(); // Initialize database
-        auto shared_files = file_index.list_files();
-        auto file_count = file_index.get_file_count();
-        auto total_size = file_index.get_total_size();
+        // Try to get status from running daemon first
+        hypershare::core::IPCClient ipc_client;
         
-        std::cout << "HyperShare Status:\n";
-        std::cout << "Connected peers: 0 (daemon not running)\n";
-        std::cout << "Active transfers: 0\n";
-        std::cout << "Files shared: " << file_count << "\n";
-        std::cout << "Total shared size: " << total_size << " bytes\n";
-        std::cout << "Storage location: " << storage_config_->download_directory << "\n";
-        std::cout << "Database: " << storage_config_->database_path << "\n";
+        hypershare::core::IPCRequest request;
+        request.command = "status";
         
-        if (!shared_files.empty()) {
-            std::cout << "\nShared files:\n";
-            for (const auto& file : shared_files) {
-                std::cout << "  - " << file.filename << " (" << file.file_size << " bytes)\n";
-                std::cout << "    File ID: " << file.file_id << "\n";
-                std::cout << "    File Hash: " << file.file_hash << "\n";
+        auto response = ipc_client.send_request(request);
+        
+        if (response && response->success) {
+            // Daemon is running, get live data
+            std::cout << "HyperShare Status (Live from Daemon):\n";
+            std::cout << "Connected peers: " << response->data.at("peer_count") << "\n";
+            std::cout << "Active transfers: 0\n"; // TODO: implement transfer tracking
+            std::cout << "Files shared: " << response->data.at("file_count") << "\n";
+            std::cout << "Total shared size: " << response->data.at("total_size") << " bytes\n";
+            std::cout << "Storage location: " << storage_config_->download_directory << "\n";
+            std::cout << "Database: " << storage_config_->database_path << "\n";
+            
+            // Get file details from daemon
+            hypershare::core::IPCRequest files_request;
+            files_request.command = "files";
+            auto files_response = ipc_client.send_request(files_request);
+            
+            if (files_response && files_response->success && !files_response->data.at("files").empty()) {
+                std::cout << "\nShared files:\n";
+                
+                std::string files_info = files_response->data.at("files");
+                std::istringstream files_stream(files_info);
+                std::string file_entry;
+                
+                while (std::getline(files_stream, file_entry, ';')) {
+                    if (file_entry.empty()) continue;
+                    
+                    // Parse file_id:filename:size:hash
+                    std::istringstream entry_stream(file_entry);
+                    std::string file_id, filename, size_str, hash;
+                    
+                    if (std::getline(entry_stream, file_id, ':') &&
+                        std::getline(entry_stream, filename, ':') &&
+                        std::getline(entry_stream, size_str, ':') &&
+                        std::getline(entry_stream, hash, ':')) {
+                        
+                        std::cout << "  - " << filename << " (" << size_str << " bytes)\n";
+                        std::cout << "    File ID: " << file_id << "\n";
+                        std::cout << "    File Hash: " << hash << "\n";
+                    }
+                }
             }
+            
+            std::cout << "\nNetwork: Daemon running and accepting connections\n";
+            
+        } else {
+            // Daemon not running, fall back to local data
+            hypershare::storage::FileIndex file_index(storage_config_->database_path);
+            file_index.initialize();
+            auto shared_files = file_index.list_files();
+            auto file_count = file_index.get_file_count();
+            auto total_size = file_index.get_total_size();
+            
+            std::cout << "HyperShare Status (Daemon Not Running):\n";
+            std::cout << "Connected peers: 0 (daemon not running)\n";
+            std::cout << "Active transfers: 0\n";
+            std::cout << "Files shared: " << file_count << "\n";
+            std::cout << "Total shared size: " << total_size << " bytes\n";
+            std::cout << "Storage location: " << storage_config_->download_directory << "\n";
+            std::cout << "Database: " << storage_config_->database_path << "\n";
+            
+            if (!shared_files.empty()) {
+                std::cout << "\nShared files:\n";
+                for (const auto& file : shared_files) {
+                    std::cout << "  - " << file.filename << " (" << file.file_size << " bytes)\n";
+                    std::cout << "    File ID: " << file.file_id << "\n";
+                    std::cout << "    File Hash: " << file.file_hash << "\n";
+                }
+            }
+            
+            std::cout << "\nNetwork: Ready for connections (use 'hypershare start' to start daemon)\n";
         }
-        
-        std::cout << "\nNetwork: Ready for connections (use 'hypershare start' to start daemon)\n";
         
         return CommandResult::ok();
         
@@ -173,11 +269,63 @@ CommandResult StatusCommandHandler::execute(const std::vector<std::string>& args
 PeersCommandHandler::PeersCommandHandler() = default;
 
 CommandResult PeersCommandHandler::execute(const std::vector<std::string>& args) {
-    std::cout << "Discovered Peers:\n";
-    std::cout << "No peers currently discovered\n";
-    std::cout << "(Peer discovery requires daemon to be running: 'hypershare start')\n";
-    
-    return CommandResult::ok();
+    try {
+        // Try to get peers from running daemon
+        hypershare::core::IPCClient ipc_client;
+        
+        hypershare::core::IPCRequest request;
+        request.command = "peers";
+        
+        auto response = ipc_client.send_request(request);
+        
+        if (response && response->success) {
+            // Daemon is running, get live peer data
+            std::cout << "Connected Peers (Live from Daemon):\n";
+            
+            int peer_count = std::stoi(response->data.at("peer_count"));
+            if (peer_count == 0) {
+                std::cout << "No peers currently connected\n";
+            } else {
+                std::cout << "Total connected peers: " << peer_count << "\n\n";
+                
+                std::string peers_info = response->data.at("peers");
+                if (!peers_info.empty()) {
+                    std::istringstream peers_stream(peers_info);
+                    std::string peer_entry;
+                    int index = 1;
+                    
+                    while (std::getline(peers_stream, peer_entry, ';')) {
+                        if (peer_entry.empty()) continue;
+                        
+                        // Parse peer_id:peer_name:endpoint
+                        std::istringstream entry_stream(peer_entry);
+                        std::string peer_id, peer_name, endpoint;
+                        
+                        if (std::getline(entry_stream, peer_id, ':') &&
+                            std::getline(entry_stream, peer_name, ':') &&
+                            std::getline(entry_stream, endpoint, ':')) {
+                            
+                            std::cout << "  [" << index++ << "] Peer ID: " << peer_id << "\n";
+                            std::cout << "      Name: " << peer_name << "\n";
+                            std::cout << "      Address: " << endpoint << "\n";
+                            std::cout << "      Status: Connected\n\n";
+                        }
+                    }
+                }
+            }
+            
+        } else {
+            // Daemon not running
+            std::cout << "Discovered Peers:\n";
+            std::cout << "No peers currently discovered\n";
+            std::cout << "(Peer discovery requires daemon to be running: 'hypershare start')\n";
+        }
+        
+        return CommandResult::ok();
+        
+    } catch (const std::exception& e) {
+        return CommandResult::error("Failed to get peers: " + std::string(e.what()));
+    }
 }
 
 // DownloadCommandHandler Implementation
@@ -278,21 +426,41 @@ CommandResult StartCommandHandler::execute(const std::vector<std::string>& args)
     std::cout << "UDP discovery port: " << udp_port << "\n";
     std::cout << "Press Ctrl+C to stop\n";
     
-    hypershare::network::ConnectionManager connection_manager;
+    auto connection_manager = std::make_shared<hypershare::network::ConnectionManager>();
     
-    if (!connection_manager.start(tcp_port, udp_port)) {
+    // Initialize storage for file announcements
+    auto storage_config = std::make_unique<hypershare::storage::StorageConfig>("./hypershare_data");
+    storage_config->create_directories();
+    auto file_index = std::make_shared<hypershare::storage::FileIndex>(storage_config->database_path);
+    file_index->initialize();
+    
+    // Set up file announcer
+    connection_manager->initialize_file_announcer(file_index);
+    
+    // Set up IPC server
+    auto ipc_server = std::make_unique<hypershare::core::IPCServer>();
+    ipc_server->set_connection_manager(connection_manager);
+    ipc_server->set_file_index(file_index);
+    
+    if (!ipc_server->start()) {
+        LOG_ERROR("Failed to start IPC server");
+        return CommandResult::error("Failed to start IPC server");
+    }
+    
+    if (!connection_manager->start(tcp_port, udp_port)) {
         LOG_ERROR("Failed to start connection manager");
         return CommandResult::error("Failed to start network services");
     }
     
     std::cout << "Network services started successfully\n";
     std::cout << "Peer discovery active on multicast group\n";
+    std::cout << "IPC server running - CLI commands can now connect\n";
     
     // Keep the daemon running and show status
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(30));
         
-        auto peer_count = connection_manager.get_connection_count();
+        auto peer_count = connection_manager->get_connection_count();
         if (peer_count > 0) {
             LOG_INFO("Connected to {} peers", peer_count);
             std::cout << "Connected peers: " << peer_count << "\n";

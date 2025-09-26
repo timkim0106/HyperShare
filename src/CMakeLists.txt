@@ -5,6 +5,8 @@ add_library(hypershare_core
     core/cli.cpp
     core/command_handler.cpp
     core/command_registry.cpp
+    core/ipc_server.cpp
+    core/ipc_client.cpp
     network/protocol.cpp
     network/connection.cpp
     network/tcp_server.cpp
@@ -13,6 +15,7 @@ add_library(hypershare_core
     network/network_manager.cpp
     network/udp_discovery.cpp
     network/connection_manager.cpp
+    network/file_announcer.cpp
     network/secure_message.cpp
     network/file_protocol.cpp
     crypto/crypto_types.cpp
