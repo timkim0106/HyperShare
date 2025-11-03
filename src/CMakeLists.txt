@@ -15,6 +15,7 @@ add_library(hypershare_core
     network/network_manager.cpp
     network/udp_discovery.cpp
     network/connection_manager.cpp
+    network/peer_router.cpp
     network/file_announcer.cpp
     network/secure_message.cpp
     network/file_protocol.cpp

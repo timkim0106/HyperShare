@@ -11,7 +11,7 @@
 
 namespace hypershare::transfer {
 
-struct SessionStats {
+struct TransferSessionStats {
     std::string session_id;
     std::string file_id;
     uint32_t peer_id;
@@ -33,8 +33,8 @@ public:
     std::string start_upload(const std::string& file_id, uint32_t peer_id);
     
     bool has_session(const std::string& session_id);
-    SessionStats get_session_stats(const std::string& session_id);
-    std::vector<SessionStats> get_all_sessions();
+    TransferSessionStats get_session_stats(const std::string& session_id);
+    std::vector<TransferSessionStats> get_all_sessions();
     
     // Transfer control
     hypershare::crypto::CryptoResult pause_transfer(const std::string& session_id);
@@ -70,7 +70,7 @@ private:
     std::string generate_session_id();
     void cleanup_completed_sessions();
     bool can_start_new_transfer() const;
-    SessionStats create_session_stats(const TransferSession& session);
+    TransferSessionStats create_session_stats(const TransferSession& session);
 };
 
 } // namespace hypershare::transfer

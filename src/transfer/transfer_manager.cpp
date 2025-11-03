@@ -55,7 +55,7 @@ bool TransferManager::has_session(const std::string& session_id) {
     return active_sessions_.find(session_id) != active_sessions_.end();
 }
 
-SessionStats TransferManager::get_session_stats(const std::string& session_id) {
+TransferSessionStats TransferManager::get_session_stats(const std::string& session_id) {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
     
     auto it = active_sessions_.find(session_id);
@@ -64,13 +64,13 @@ SessionStats TransferManager::get_session_stats(const std::string& session_id) {
     }
     
     // Return empty stats if session not found
-    return SessionStats{};
+    return TransferSessionStats{};
 }
 
-std::vector<SessionStats> TransferManager::get_all_sessions() {
+std::vector<TransferSessionStats> TransferManager::get_all_sessions() {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
     
-    std::vector<SessionStats> all_stats;
+    std::vector<TransferSessionStats> all_stats;
     for (const auto& [session_id, session] : active_sessions_) {
         all_stats.push_back(create_session_stats(*session));
     }
@@ -256,8 +256,8 @@ bool TransferManager::can_start_new_transfer() const {
     return active_sessions_.size() < max_concurrent_transfers_;
 }
 
-SessionStats TransferManager::create_session_stats(const TransferSession& session) {
-    SessionStats stats;
+TransferSessionStats TransferManager::create_session_stats(const TransferSession& session) {
+    TransferSessionStats stats;
     stats.session_id = session.get_session_id();
     stats.file_id = session.get_file_id();
     stats.peer_id = session.get_peer_id();

@@ -57,6 +57,17 @@ bool ConnectionManager::start(std::uint16_t tcp_port, std::uint16_t udp_port) {
             handle_file_announce(conn, msg);
         });
     
+    // Register routing message handlers
+    network_manager_->register_message_handler<RouteUpdateMessage>(MessageType::ROUTE_UPDATE,
+        [this](std::shared_ptr<Connection> conn, const RouteUpdateMessage& msg) {
+            handle_route_update(conn, msg);
+        });
+    
+    network_manager_->register_message_handler<TopologySyncMessage>(MessageType::TOPOLOGY_SYNC,
+        [this](std::shared_ptr<Connection> conn, const TopologySyncMessage& msg) {
+            handle_topology_sync(conn, msg);
+        });
+    
     // Set up discovery handlers
     discovery_->set_peer_discovered_handler(
         [this](const PeerInfo& peer) {
@@ -327,6 +338,14 @@ void ConnectionManager::handle_handshake(std::shared_ptr<Connection> connection,
         connection->send_message(MessageType::HANDSHAKE_ACK, response);
         it->second.handshake_state = HandshakeState::COMPLETED;
         
+        // Add peer to router if routing is enabled
+        if (peer_router_) {
+            peer_router_->add_direct_peer(msg.peer_id, 
+                                        connection->get_remote_address(),
+                                        connection->get_remote_port(),
+                                        connection);
+        }
+        
         LOG_INFO("Handshake completed with peer {} ({})", msg.peer_id, msg.peer_name);
     }
 }
@@ -345,6 +364,14 @@ void ConnectionManager::handle_handshake_ack(std::shared_ptr<Connection> connect
         
         connection->set_peer_id(msg.peer_id);
         peer_connections_[msg.peer_id] = connection;
+        
+        // Add peer to router if routing is enabled
+        if (peer_router_) {
+            peer_router_->add_direct_peer(msg.peer_id, 
+                                        connection->get_remote_address(),
+                                        connection->get_remote_port(),
+                                        connection);
+        }
         
         LOG_INFO("Handshake completed with peer {} ({})", msg.peer_id, msg.peer_name);
     }
@@ -436,12 +463,105 @@ void ConnectionManager::cleanup_failed_connections() {
             
             if (it->second.peer_id != 0) {
                 peer_connections_.erase(it->second.peer_id);
+                
+                // Remove peer from router if routing is enabled
+                if (peer_router_) {
+                    peer_router_->remove_peer(it->second.peer_id);
+                }
             }
             
             it = connections_.erase(it);
         } else {
             ++it;
         }
+    }
+}
+
+// Peer routing integration methods
+void ConnectionManager::enable_routing() {
+    if (peer_router_) {
+        LOG_DEBUG("Peer routing already enabled");
+        return;
+    }
+    
+    peer_router_ = std::make_shared<PeerRouter>(local_peer_id_);
+    
+    // Set up message senders for the router
+    peer_router_->set_message_sender([this](std::uint32_t peer_id, MessageType type, const std::vector<std::uint8_t>& payload) {
+        auto info = get_connection_info(peer_id);
+        if (info && info->handshake_state == HandshakeState::COMPLETED) {
+            info->connection->send_raw(type, payload);
+        }
+    });
+    
+    peer_router_->set_broadcast_sender([this](MessageType type, const std::vector<std::uint8_t>& payload) {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        for (const auto& [connection, info] : connections_) {
+            if (info.handshake_state == HandshakeState::COMPLETED) {
+                connection->send_raw(type, payload);
+            }
+        }
+    });
+    
+    peer_router_->start();
+    
+    // Add existing connections to router
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        for (const auto& [connection, info] : connections_) {
+            if (info.handshake_state == HandshakeState::COMPLETED) {
+                peer_router_->add_direct_peer(info.peer_id, 
+                                            connection->get_remote_address(),
+                                            connection->get_remote_port(),
+                                            connection);
+            }
+        }
+    }
+    
+    LOG_INFO("Peer routing enabled with {} existing connections", get_connection_count());
+}
+
+void ConnectionManager::disable_routing() {
+    if (peer_router_) {
+        peer_router_->stop();
+        peer_router_.reset();
+        LOG_INFO("Peer routing disabled");
+    }
+}
+
+std::vector<FileLocation> ConnectionManager::find_file_in_network(const std::string& file_id, 
+                                                                  const std::vector<std::string>& search_terms) {
+    if (!peer_router_) {
+        LOG_WARN("Peer routing not enabled, cannot search network");
+        return {};
+    }
+    
+    return peer_router_->find_file(file_id, search_terms);
+}
+
+void ConnectionManager::announce_file_to_network(const std::string& file_id, const std::string& file_hash, 
+                                                std::uint64_t file_size) {
+    if (!peer_router_) {
+        LOG_WARN("Peer routing not enabled, cannot announce to network");
+        return;
+    }
+    
+    peer_router_->announce_file(file_id, file_hash, file_size);
+}
+
+void ConnectionManager::handle_route_update(std::shared_ptr<Connection> connection, const RouteUpdateMessage& msg) {
+    if (peer_router_) {
+        peer_router_->handle_route_update(connection, msg);
+    } else {
+        LOG_DEBUG("Received route update but routing not enabled");
+    }
+}
+
+void ConnectionManager::handle_topology_sync(std::shared_ptr<Connection> connection, const TopologySyncMessage& msg) {
+    if (peer_router_) {
+        peer_router_->handle_topology_sync(connection, msg);
+    } else {
+        LOG_DEBUG("Received topology sync but routing not enabled");
     }
 }
 

@@ -75,6 +75,30 @@ void Connection::send_message(const MessageHeader& header, const std::vector<std
               static_cast<int>(header.type), payload.size(), remote_endpoint_);
 }
 
+void Connection::send_raw(MessageType type, const std::vector<std::uint8_t>& payload) {
+    MessageHeader header(type, static_cast<std::uint32_t>(payload.size()));
+    header.calculate_checksum(payload);
+    send_message(header, payload);
+}
+
+std::string Connection::get_remote_address() const {
+    try {
+        return socket_.remote_endpoint().address().to_string();
+    } catch (const std::exception& e) {
+        LOG_WARN("Failed to get remote address: {}", e.what());
+        return "unknown";
+    }
+}
+
+std::uint16_t Connection::get_remote_port() const {
+    try {
+        return socket_.remote_endpoint().port();
+    } catch (const std::exception& e) {
+        LOG_WARN("Failed to get remote port: {}", e.what());
+        return 0;
+    }
+}
+
 void Connection::do_read_header() {
     if (state_ == ConnectionState::DISCONNECTED || state_ == ConnectionState::CLOSING) {
         return;

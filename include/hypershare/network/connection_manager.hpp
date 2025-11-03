@@ -2,6 +2,7 @@
 
 #include "hypershare/network/network_manager.hpp"
 #include "hypershare/network/udp_discovery.hpp"
+#include "hypershare/network/peer_router.hpp"
 #include <memory>
 #include <unordered_set>
 #include <chrono>
@@ -63,6 +64,12 @@ public:
             info->connection->send_message(type, message);
             return true;
         }
+        
+        // Try routing through the peer router if direct connection not available
+        if (peer_router_) {
+            return peer_router_->forward_message(peer_id, type, message.serialize());
+        }
+        
         return false;
     }
     
@@ -72,6 +79,17 @@ public:
     
     void initialize_file_announcer(std::shared_ptr<hypershare::storage::FileIndex> file_index);
     std::shared_ptr<FileAnnouncer> get_file_announcer() const { return file_announcer_; }
+    
+    // Peer routing methods
+    void enable_routing();
+    void disable_routing();
+    std::shared_ptr<PeerRouter> get_peer_router() const { return peer_router_; }
+    
+    // File discovery through routing
+    std::vector<FileLocation> find_file_in_network(const std::string& file_id, 
+                                                  const std::vector<std::string>& search_terms = {});
+    void announce_file_to_network(const std::string& file_id, const std::string& file_hash, 
+                                 std::uint64_t file_size);
 
 private:
     void handle_new_connection(std::shared_ptr<Connection> connection);
@@ -84,6 +102,10 @@ private:
     void handle_file_announce(std::shared_ptr<Connection> connection, const FileAnnounceMessage& msg);
     void handle_disconnect(std::shared_ptr<Connection> connection);
     
+    // Routing message handlers
+    void handle_route_update(std::shared_ptr<Connection> connection, const RouteUpdateMessage& msg);
+    void handle_topology_sync(std::shared_ptr<Connection> connection, const TopologySyncMessage& msg);
+    
     void send_handshake(std::shared_ptr<Connection> connection);
     void send_heartbeat(std::shared_ptr<Connection> connection);
     void check_connection_health();
@@ -92,6 +114,7 @@ private:
     std::unique_ptr<NetworkManager> network_manager_;
     std::unique_ptr<UdpDiscovery> discovery_;
     std::shared_ptr<FileAnnouncer> file_announcer_;
+    std::shared_ptr<PeerRouter> peer_router_;
     
     std::unordered_map<std::shared_ptr<Connection>, ConnectionInfo> connections_;
     std::unordered_map<std::uint32_t, std::shared_ptr<Connection>> peer_connections_;
