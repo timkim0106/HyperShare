@@ -4,32 +4,35 @@ A high-performance P2P file sharing system built with C++20.
 
 ## What is this?
 
-I got tired of slow file transfers and complicated sharing setups, so I built my own. HyperShare uses C++20 features and modern cryptography to create a fast, secure way to share files directly between computers.
+I wanted to build something that could move files between machines quickly and securely, without relying on cloud services. HyperShare uses modern C++20 and cryptography to create direct peer-to-peer connections for file transfers.
 
-## Features
+## What works right now
 
-- Direct peer-to-peer transfers (no central server needed)
-- Fast transfers using chunked delivery and parallel connections
-- Strong encryption with ChaCha20-Poly1305 and forward secrecy
-- Web interface for monitoring transfers
-- Cross-platform support (Linux, macOS, Windows)
+- Daemon + IPC design: Single background process with multiple CLI clients  
+- Secure file transfers: Ed25519 authentication, ChaCha20 encryption, Blake3 integrity
+- Real-time status: Live monitoring of transfers and peer connections
+- File management: Chunked uploads with resume support
+- Network discovery: UDP multicast for automatic peer finding
+- Solid testing: Comprehensive test suite with 799+ assertions
 
 ## Quick Start
 
 ```bash
-# Build
+# Build the project
 mkdir build && cd build
-cmake ..
-make
+cmake .. && make
 
-# Start sharing
-./hypershare start
+# Start the daemon
+./build/src/hypershare start
 
 # Share a file
-./hypershare share document.pdf
+./build/src/hypershare share document.pdf
 
-# Connect to someone else
-./hypershare connect 192.168.1.100
+# Connect to another machine  
+./build/src/hypershare connect 192.168.1.100:8080
+
+# Check what's happening
+./build/src/hypershare status
 ```
 
 ## Why C++20?
@@ -70,7 +73,13 @@ make -j$(nproc)
 
 ## Status
 
-Currently in development. Core networking and crypto components are functional, working on P2P discovery and web interface.
+The core system works - you can share files between machines and it handles the crypto properly. Still working on multi-hop and P2P routing layer, a web dashboard for monitoring, and performance validation.
+
+## Try the demos
+
+Check out `demos/` for different scenarios:
+- `quick_start_local_fixed.sh` - Basic demo with one daemon
+- `terminal_screenshot_demo.sh` - Perfect setup for screenshots
 
 ## License
 
