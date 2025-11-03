@@ -11,9 +11,15 @@ echo
 
 # Team configuration
 DEMO_DIR="/tmp/hypershare_dev_team"
-TEAM_SIZE=4
+DAEMON_TCP_PORT=8080
+DAEMON_UDP_PORT=8081
 
-# Developer profiles
+# Get absolute path to HyperShare executable
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$(dirname "${SCRIPT_DIR}")")"
+HYPERSHARE_BIN="${PROJECT_ROOT}/build/src/hypershare"
+
+# Developer profiles (simulated as different directories and files)
 declare -A DEVELOPERS=(
     ["alice"]="Team Lead - Full Stack"
     ["bob"]="Backend Developer"  
@@ -21,16 +27,61 @@ declare -A DEVELOPERS=(
     ["dave"]="DevOps Engineer"
 )
 
-declare -A PORTS=(
-    ["alice"]=8080
-    ["bob"]=8081
-    ["carol"]=8082
-    ["dave"]=8083
-)
+# Port conflict detection (copied from fixed demo)
+check_port_available() {
+    local port=$1
+    local protocol=${2:-tcp}
+    
+    if command -v lsof > /dev/null 2>&1; then
+        lsof -i ${protocol}:${port} > /dev/null 2>&1
+        return $?
+    else
+        return 1
+    fi
+}
+
+kill_port_processes() {
+    local port=$1
+    local protocol=${2:-tcp}
+    
+    if command -v lsof > /dev/null 2>&1; then
+        local pids=$(lsof -ti ${protocol}:${port} 2>/dev/null)
+        if [ -n "$pids" ]; then
+            echo "$pids" | xargs kill -TERM 2>/dev/null || true
+            sleep 2
+            local remaining_pids=$(lsof -ti ${protocol}:${port} 2>/dev/null)
+            if [ -n "$remaining_pids" ]; then
+                echo "$remaining_pids" | xargs kill -KILL 2>/dev/null || true
+                sleep 1
+            fi
+        fi
+    fi
+}
+
+prepare_environment() {
+    echo "🔍 Checking port availability..."
+    
+    if check_port_available $DAEMON_TCP_PORT tcp; then
+        echo "   ⚠️  Port ${DAEMON_TCP_PORT}/tcp is in use, freeing..."
+        kill_port_processes $DAEMON_TCP_PORT tcp
+    else
+        echo "   ✅ Port ${DAEMON_TCP_PORT}/tcp is available"
+    fi
+    
+    if check_port_available $DAEMON_UDP_PORT udp; then
+        echo "   ⚠️  Port ${DAEMON_UDP_PORT}/udp is in use, freeing..."
+        kill_port_processes $DAEMON_UDP_PORT udp
+    else
+        echo "   ✅ Port ${DAEMON_UDP_PORT}/udp is available"
+    fi
+}
 
 cleanup() {
     echo "🧹 Cleaning up development team demo..."
-    pkill -f "hypershare.*daemon" || true
+    pkill -TERM -f "hypershare" 2>/dev/null || true
+    sleep 2
+    pkill -KILL -f "hypershare" 2>/dev/null || true
+    rm -f /tmp/hypershare.sock
     rm -rf "${DEMO_DIR}"
 }
 

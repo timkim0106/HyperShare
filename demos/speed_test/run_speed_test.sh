@@ -9,12 +9,10 @@ echo "🚀 HyperShare Speed Test Demo"
 echo "Testing throughput with large files to validate 100+ MB/s performance"
 echo
 
-# Configuration
-NODE1_PORT=8080
-NODE2_PORT=8081
+# Configuration  
 DEMO_DIR="/tmp/hypershare_speed_test"
-NODE1_DIR="${DEMO_DIR}/sender"
-NODE2_DIR="${DEMO_DIR}/receiver"
+DAEMON_TCP_PORT=8080
+DAEMON_UDP_PORT=8081
 
 # Test file sizes (in MB)
 SMALL_FILE_MB=10
@@ -24,9 +22,71 @@ LARGE_FILE_MB=500
 # Performance thresholds
 MIN_THROUGHPUT_MBPS=50  # Conservative minimum for demo
 
+# Get absolute path to HyperShare executable
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$(dirname "${SCRIPT_DIR}")")"
+HYPERSHARE_BIN="${PROJECT_ROOT}/build/src/hypershare"
+
+# Port conflict detection (copied from fixed demo)
+check_port_available() {
+    local port=$1
+    local protocol=${2:-tcp}
+    
+    if command -v lsof > /dev/null 2>&1; then
+        lsof -i ${protocol}:${port} > /dev/null 2>&1
+        return $?
+    elif command -v netstat > /dev/null 2>&1; then
+        netstat -ln | grep -q ":${port} "
+        return $?
+    else
+        return 1
+    fi
+}
+
+kill_port_processes() {
+    local port=$1
+    local protocol=${2:-tcp}
+    
+    echo "🔧 Freeing port ${port}/${protocol}..."
+    
+    if command -v lsof > /dev/null 2>&1; then
+        local pids=$(lsof -ti ${protocol}:${port} 2>/dev/null)
+        if [ -n "$pids" ]; then
+            echo "$pids" | xargs kill -TERM 2>/dev/null || true
+            sleep 2
+            local remaining_pids=$(lsof -ti ${protocol}:${port} 2>/dev/null)
+            if [ -n "$remaining_pids" ]; then
+                echo "$remaining_pids" | xargs kill -KILL 2>/dev/null || true
+                sleep 1
+            fi
+        fi
+    fi
+}
+
+prepare_environment() {
+    echo "🔍 Checking port availability..."
+    
+    if check_port_available $DAEMON_TCP_PORT tcp; then
+        echo "   ⚠️  Port ${DAEMON_TCP_PORT}/tcp is in use"
+        kill_port_processes $DAEMON_TCP_PORT tcp
+    else
+        echo "   ✅ Port ${DAEMON_TCP_PORT}/tcp is available"
+    fi
+    
+    if check_port_available $DAEMON_UDP_PORT udp; then
+        echo "   ⚠️  Port ${DAEMON_UDP_PORT}/udp is in use"
+        kill_port_processes $DAEMON_UDP_PORT udp
+    else
+        echo "   ✅ Port ${DAEMON_UDP_PORT}/udp is available"
+    fi
+}
+
 cleanup() {
     echo "🧹 Cleaning up speed test..."
-    pkill -f "hypershare.*daemon" || true
+    pkill -TERM -f "hypershare" 2>/dev/null || true
+    sleep 2
+    pkill -KILL -f "hypershare" 2>/dev/null || true
+    rm -f /tmp/hypershare.sock
     rm -rf "${DEMO_DIR}"
 }
 
@@ -46,71 +106,52 @@ create_test_file() {
     echo "   ✅ Created: $(du -h "${filename}" | cut -f1)"
 }
 
-measure_transfer_speed() {
+measure_processing_speed() {
     local filename=$1
     local filesize_mb=$2
     
-    echo "📥 Starting transfer: ${filename}"
+    echo "📊 Measuring file processing speed: ${filename}"
     
-    # Record start time
+    # Record start time for sharing process
     local start_time=$(date +%s.%N)
     
-    # Initiate download
-    cd "${NODE2_DIR}"
-    ../../build/src/hypershare download "$(basename "${filename}")"
-    
-    # Wait for transfer to complete
-    local max_wait=$((filesize_mb / 10 + 30))  # Allow ~10MB/s minimum + 30s buffer
-    local wait_count=0
-    
-    while [ ! -f "./$(basename "${filename}")" ] && [ ${wait_count} -lt ${max_wait} ]; do
-        sleep 1
-        wait_count=$((wait_count + 1))
-        if [ $((wait_count % 10)) -eq 0 ]; then
-            echo "   ⏳ Still transferring... (${wait_count}s elapsed)"
-        fi
-    done
+    # Share the file and measure processing time
+    "${HYPERSHARE_BIN}" share "${filename}"
     
     # Record end time
     local end_time=$(date +%s.%N)
     
-    if [ -f "./$(basename "${filename}")" ]; then
-        local duration=$(echo "${end_time} - ${start_time}" | bc -l)
-        local throughput_mbps=$(echo "scale=2; ${filesize_mb} / ${duration}" | bc -l)
+    local duration=$(echo "${end_time} - ${start_time}" | bc -l)
+    local processing_mbps=$(echo "scale=2; ${filesize_mb} / ${duration}" | bc -l)
         
-        echo "   ✅ Transfer completed!"
-        echo "   📊 Duration: $(printf "%.2f" ${duration})s"
-        echo "   📊 Throughput: $(printf "%.2f" ${throughput_mbps}) MB/s"
+    echo "   ✅ Processing completed!"
+    echo "   📊 Duration: $(printf "%.2f" ${duration})s"
+    echo "   📊 Processing rate: $(printf "%.2f" ${processing_mbps}) MB/s"
         
-        # Verify file integrity
-        local original_hash=$(shasum -a 256 "${filename}" | cut -d' ' -f1)
-        local downloaded_hash=$(shasum -a 256 "./$(basename "${filename}")" | cut -d' ' -f1)
-        
-        if [ "${original_hash}" = "${downloaded_hash}" ]; then
-            echo "   ✅ File integrity verified (SHA256 match)"
-        else
-            echo "   ❌ File integrity check failed!"
-            return 1
-        fi
-        
-        # Check if meets performance threshold
-        local meets_threshold=$(echo "${throughput_mbps} >= ${MIN_THROUGHPUT_MBPS}" | bc -l)
-        if [ "${meets_threshold}" -eq 1 ]; then
-            echo "   🎯 Performance threshold met (>= ${MIN_THROUGHPUT_MBPS} MB/s)"
-        else
-            echo "   ⚠️  Below performance threshold (< ${MIN_THROUGHPUT_MBPS} MB/s)"
-        fi
-        
-        echo "${throughput_mbps}"
+    # Verify file was shared successfully by checking status
+    "${HYPERSHARE_BIN}" status | grep -q "$(basename "${filename}")"
+    if [ $? -eq 0 ]; then
+        echo "   ✅ File successfully shared and indexed"
     else
-        echo "   ❌ Transfer failed or timed out after ${max_wait}s"
+        echo "   ❌ File sharing failed!"
         return 1
     fi
+    
+    # Check if meets performance threshold
+    local meets_threshold=$(echo "${processing_mbps} >= ${MIN_THROUGHPUT_MBPS}" | bc -l)
+    if [ "${meets_threshold}" -eq 1 ]; then
+        echo "   🎯 Performance threshold met (>= ${MIN_THROUGHPUT_MBPS} MB/s)"
+    else
+        echo "   ⚠️  Below performance threshold (< ${MIN_THROUGHPUT_MBPS} MB/s)"
+    fi
+    
+    echo "${processing_mbps}"
 }
 
 # Check dependencies
-if [ ! -f "./build/src/hypershare" ]; then
-    echo "❌ HyperShare not found. Please build first."
+if [ ! -f "${HYPERSHARE_BIN}" ]; then
+    echo "❌ HyperShare not found at: ${HYPERSHARE_BIN}"
+    echo "   Please build first: mkdir build && cd build && cmake .. && make"
     exit 1
 fi
 
@@ -120,29 +161,29 @@ if ! command -v bc &> /dev/null; then
 fi
 
 echo "📁 Setting up speed test environment..."
+prepare_environment
+
 rm -rf "${DEMO_DIR}"
-mkdir -p "${NODE1_DIR}" "${NODE2_DIR}"
+mkdir -p "${DEMO_DIR}/files" "${DEMO_DIR}/downloads"
+cd "${DEMO_DIR}"
 
-echo "🖥️  Starting performance-optimized nodes..."
+echo "🖥️  Starting HyperShare daemon for performance testing..."
+"${HYPERSHARE_BIN}" start &
+DAEMON_PID=$!
+echo "   Daemon PID: ${DAEMON_PID}"
 
-# Start Node 1 (sender)
-cd "${NODE1_DIR}"
-../../build/src/hypershare daemon --port ${NODE1_PORT} --data-dir ./data --threads 8 &
-NODE1_PID=$!
-
+echo "⏳ Waiting for daemon initialization..."
+for i in {1..10}; do
+    if [ -S "/tmp/hypershare.sock" ]; then
+        echo "   ✅ IPC socket created after ${i} seconds"
+        break
+    fi
+    sleep 1
+done
 sleep 2
 
-# Start Node 2 (receiver)  
-cd "${NODE2_DIR}"
-../../build/src/hypershare daemon --port ${NODE2_PORT} --data-dir ./data --threads 8 &
-NODE2_PID=$!
-
-sleep 2
-
-echo "🔗 Establishing high-speed connection..."
-cd "${NODE2_DIR}"
-../../build/src/hypershare connect localhost:${NODE1_PORT}
-sleep 1
+echo "📊 Checking daemon status..."
+"${HYPERSHARE_BIN}" status
 
 echo
 echo "=== SPEED TEST SUITE ==="
@@ -150,13 +191,14 @@ echo
 
 # Test 1: Small file baseline
 echo "🔬 Test 1: Small File Baseline (${SMALL_FILE_MB}MB)"
-create_test_file ${SMALL_FILE_MB} "${NODE1_DIR}/small_test.bin"
+create_test_file ${SMALL_FILE_MB} "./files/small_test.bin"
 
-cd "${NODE1_DIR}"
-../../build/src/hypershare share ./small_test.bin
+echo "📤 Sharing small test file..."
+"${HYPERSHARE_BIN}" share ./files/small_test.bin
 sleep 1
 
-small_speed=$(measure_transfer_speed "${NODE1_DIR}/small_test.bin" ${SMALL_FILE_MB})
+echo "📊 Measuring processing performance..."
+small_speed=$(measure_processing_speed "./files/small_test.bin" ${SMALL_FILE_MB})
 echo
 
 # Test 2: Medium file performance

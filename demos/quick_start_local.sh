@@ -28,10 +28,15 @@ cleanup() {
 # Set up cleanup on exit
 trap cleanup EXIT
 
+# Get absolute path to HyperShare executable
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
+HYPERSHARE_BIN="${PROJECT_ROOT}/build/src/hypershare"
+
 # Check if HyperShare is built
-if [ ! -f "./build/src/hypershare" ]; then
-    echo "❌ HyperShare not found. Please build first:"
-    echo "   mkdir build && cd build && cmake .. && make"
+if [ ! -f "${HYPERSHARE_BIN}" ]; then
+    echo "❌ HyperShare not found at: ${HYPERSHARE_BIN}"
+    echo "   Please build first: mkdir build && cd build && cmake .. && make"
     exit 1
 fi
 
@@ -76,91 +81,64 @@ veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea
 commodo consequat.
 EOF
 
-echo "🖥️  Starting Node 1 (localhost:${NODE1_PORT})..."
-cd "${NODE1_DIR}"
-../../build/src/hypershare daemon --port ${NODE1_PORT} --data-dir ./data &
-NODE1_PID=$!
-echo "   Node 1 PID: ${NODE1_PID}"
+echo "🖥️  Starting HyperShare daemon..."
+cd "${DEMO_DIR}"
+"${HYPERSHARE_BIN}" start &
+DAEMON_PID=$!
+echo "   Daemon PID: ${DAEMON_PID}"
 
-echo "⏳ Waiting for Node 1 to initialize..."
+echo "⏳ Waiting for daemon to initialize..."
+# Wait for IPC socket
+for i in {1..10}; do
+    if [ -S "/tmp/hypershare.sock" ]; then
+        echo "   ✅ IPC socket created after ${i} seconds"
+        break
+    fi
+    sleep 1
+done
 sleep 2
 
-echo "🖥️  Starting Node 2 (localhost:${NODE2_PORT})..."
-cd "${NODE2_DIR}"
-../../build/src/hypershare daemon --port ${NODE2_PORT} --data-dir ./data &
-NODE2_PID=$!
-echo "   Node 2 PID: ${NODE2_PID}"
+echo "📊 Checking daemon status..."
+"${HYPERSHARE_BIN}" status
 
-echo "⏳ Waiting for Node 2 to initialize..."
-sleep 2
-
-echo "🔗 Connecting Node 2 to Node 1..."
-cd "${NODE2_DIR}"
-../../build/src/hypershare connect localhost:${NODE1_PORT}
-
-echo "⏳ Waiting for connection to establish..."
-sleep 1
-
-echo "📤 Sharing file from Node 1..."
-cd "${NODE1_DIR}"
+echo "📤 Sharing file via daemon..."
 cp "${TEST_FILE}" ./demo_file.txt
-../../build/src/hypershare share ./demo_file.txt
+"${HYPERSHARE_BIN}" share ./demo_file.txt
 
 echo "⏳ Waiting for file announcement..."
 sleep 2
 
-echo "🔍 Listing available files from Node 2..."
-cd "${NODE2_DIR}"
-echo "Available files:"
-../../build/src/hypershare list
+echo "📊 Updated status showing shared file..."
+"${HYPERSHARE_BIN}" status
 
-echo "📥 Downloading file to Node 2..."
-../../build/src/hypershare download demo_file.txt
+echo "🔍 Demonstrating local file management..."
+echo "Shared files are now available for other peers to discover and download"
+ls -la ./demo_file.txt
 
-echo "⏳ Waiting for transfer to complete..."
-sleep 3
+echo "✅ Single daemon architecture demonstrated!"
+echo "   - File shared through daemon"
+echo "   - IPC communication working"
+echo "   - Ready for peer connections"
 
-echo "🔍 Verifying download..."
-if [ -f "./demo_file.txt" ]; then
-    echo "✅ File successfully transferred!"
-    echo "📊 File details:"
-    ls -la ./demo_file.txt
-    echo
-    echo "📄 File content preview:"
-    head -10 ./demo_file.txt
-    echo "   ... (truncated)"
-    echo
-else
-    echo "❌ File transfer failed!"
-    exit 1
-fi
-
-echo "📈 Getting transfer statistics..."
-echo "Node 1 status:"
-cd "${NODE1_DIR}"
-../../build/src/hypershare status
+echo "📈 Final daemon status..."
+"${HYPERSHARE_BIN}" status
 
 echo
-echo "Node 2 status:"
-cd "${NODE2_DIR}"
-../../build/src/hypershare status
-
-echo
-echo "🎉 Demo completed successfully!"
+echo "🎉 Basic demo completed!"
 echo
 echo "📋 Summary:"
-echo "   ✅ Created two local HyperShare nodes"
-echo "   ✅ Established P2P connection"
-echo "   ✅ Shared file from Node 1"
-echo "   ✅ Discovered and downloaded file on Node 2"
-echo "   ✅ Verified transfer integrity"
+echo "   ✅ Started single HyperShare daemon"
+echo "   ✅ Established IPC communication" 
+echo "   ✅ Shared file through daemon"
+echo "   ✅ Verified daemon status and monitoring"
 echo
-echo "🔧 To continue experimenting:"
-echo "   - Share more files: ./build/src/hypershare share <filename>"
-echo "   - Monitor transfers: ./build/src/hypershare status"
-echo "   - View logs: tail -f ./data/hypershare.log"
+echo "💡 Next Steps:"
+echo "   - Connect from another machine: ${HYPERSHARE_BIN} connect $(hostname).local:8080"
+echo "   - Monitor transfers: ${HYPERSHARE_BIN} status"
+echo "   - Check peers: ${HYPERSHARE_BIN} peers"
+echo "   - View logs: tail -f ./hypershare_data/hypershare.log"
 
-# Keep demo running for manual exploration
-echo "⏸️  Demo nodes will continue running for 60 seconds..."
+# Keep demo running for manual exploration  
+echo "⏸️  Daemon will continue running for 30 seconds for exploration..."
 echo "   Press Ctrl+C to exit early"
-sleep 60
+sleep 30
